@@ -1,0 +1,57 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { loadConfig } from "../../src/config/load.js";
+import { hermesConfigSchema } from "../../src/config/schema.js";
+
+const originalEnv = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+});
+
+describe("config loading", () => {
+  it("loads config and resolves default agent", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const configPath = path.join(dir, "hermes.config.yaml");
+
+    await writeFile(
+      configPath,
+      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    default: true\n`,
+      "utf8",
+    );
+
+    process.env.TEST_TG_TOKEN = "abc";
+
+    const loaded = await loadConfig(configPath);
+    expect(loaded.defaultAgentId).toBe("a");
+    expect(path.isAbsolute(loaded.agents[0].cwd)).toBe(true);
+    expect(loaded.telegram.token).toBe("abc");
+  });
+
+  it("throws when telegram token env is missing", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const configPath = path.join(dir, "hermes.config.yaml");
+
+    await writeFile(
+      configPath,
+      `telegram:\n  enabled: true\n  tokenEnv: MISSING_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      "utf8",
+    );
+
+    await expect(loadConfig(configPath)).rejects.toThrow("MISSING_TOKEN");
+  });
+
+  it("rejects duplicate agent ids", () => {
+    expect(() =>
+      hermesConfigSchema.parse({
+        telegram: { enabled: true, tokenEnv: "TG" },
+        agents: [
+          { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+          { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+        ],
+      }),
+    ).toThrow("Duplicate agent id");
+  });
+});
