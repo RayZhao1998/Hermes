@@ -41,6 +41,22 @@ class FakeAgent implements Agent {
   async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomUUID();
     this.sessions.set(sessionId, {});
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: "explain",
+            description: "Explain the selected code or text.",
+          },
+          {
+            name: "summarize",
+            description: "Summarize the latest context.",
+          },
+        ],
+      },
+    });
     return { sessionId };
   }
 

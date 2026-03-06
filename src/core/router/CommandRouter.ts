@@ -1,10 +1,15 @@
+export interface ChatCommandDefinition {
+  name: string;
+  description: string;
+}
+
 export const commandDefinitions = [
   { name: "agents", description: "List configured agents" },
   { name: "agent", description: "Switch the active agent" },
   { name: "new", description: "Create a new ACP session" },
   { name: "status", description: "Show current chat state" },
   { name: "cancel", description: "Cancel the active turn" },
-] as const;
+] as const satisfies readonly ChatCommandDefinition[];
 
 export type CommandName = (typeof commandDefinitions)[number]["name"];
 
@@ -15,6 +20,21 @@ export interface ParsedCommand {
 
 const supportedCommands: ReadonlySet<string> = new Set(commandDefinitions.map(({ name }) => name));
 const aliases = new Map<string, CommandName>([["session", "new"]]);
+
+export function mergeCommandDefinitions(extraCommands: readonly ChatCommandDefinition[]): ChatCommandDefinition[] {
+  const merged: ChatCommandDefinition[] = [...commandDefinitions];
+  const seen = new Set<string>(commandDefinitions.map(({ name }) => name));
+
+  for (const command of extraCommands) {
+    if (seen.has(command.name)) {
+      continue;
+    }
+    merged.push(command);
+    seen.add(command.name);
+  }
+
+  return merged;
+}
 
 export class CommandRouter {
   parse(input: string): ParsedCommand | null {

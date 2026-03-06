@@ -8,6 +8,7 @@ Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegr
 
 - ACP transport over `stdio` only.
 - Telegram bot transport via Chat SDK polling.
+- Chat-scoped Telegram slash commands merged with ACP `available_commands_update`.
 - One persistent process per configured agent.
 - Manual session creation via `/new` only.
 - Auto-approval for `session/request_permission`.
@@ -51,6 +52,7 @@ npm run dev
 - `/new` create a new ACP session
 - `/status` show current agent/session/turn state
 - `/cancel` cancel in-flight prompt turn
+- ACP slash commands published by the active session are registered dynamically for the current Telegram chat and are executed by sending the raw `/<command> ...` prompt to the agent.
 
 ## Build and Test
 

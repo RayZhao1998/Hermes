@@ -1,12 +1,17 @@
 import type { Logger } from "pino";
+import type { AvailableCommand, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { ChannelAdapter } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
-import { CommandRouter, type ParsedCommand } from "../router/CommandRouter.js";
+import {
+  CommandRouter,
+  mergeCommandDefinitions,
+  type ParsedCommand,
+} from "../router/CommandRouter.js";
 import { InMemoryChatStateStore } from "../state/InMemoryChatStateStore.js";
 import type { AccessControlConfig } from "../security/isAuthorized.js";
 import { isAuthorizedMessage } from "../security/isAuthorized.js";
 import { AgentProcessManager } from "../acp/AgentProcessManager.js";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { extractAvailableCommands } from "../acp/ACPClient.js";
 
 const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Hermes.";
 const NO_SESSION_TEXT = "No active session. Run /new first.";
@@ -22,6 +27,20 @@ type RenderEvent =
       kind: "message";
       text: string;
     };
+
+interface ActiveTurnState {
+  turnId: string;
+  emittedContent: boolean;
+  chunkBuffer: string;
+}
+
+interface SessionBinding {
+  chatId: string;
+  agentId: string;
+  sessionId: string;
+  unsubscribe: () => void;
+  activeTurn?: ActiveTurnState;
+}
 
 function extractTextBlock(content: unknown): string | undefined {
   if (!content || typeof content !== "object") {
@@ -170,6 +189,7 @@ export class ChatOrchestrator {
   private readonly accessControl: AccessControlConfig;
   private readonly logger: Logger;
   private readonly typingLastSentAtByChat = new Map<string, number>();
+  private readonly sessionBindings = new Map<string, SessionBinding>();
 
   constructor(options: ChatOrchestratorOptions) {
     this.channel = options.channel;
@@ -188,6 +208,10 @@ export class ChatOrchestrator {
   }
 
   async stop(): Promise<void> {
+    for (const binding of this.sessionBindings.values()) {
+      binding.unsubscribe();
+    }
+    this.sessionBindings.clear();
     await this.channel.stop();
   }
 
@@ -203,7 +227,11 @@ export class ChatOrchestrator {
     }
 
     const chatKey = `${message.platform}:${message.chatId}`;
+    const isNewChat = !this.stateStore.get(chatKey);
     const state = this.stateStore.getOrCreate(chatKey, this.agentManager.getDefaultAgentId());
+    if (isNewChat) {
+      await this.syncCommands(chatKey, message.chatId);
+    }
     const parsedCommand = this.router.parse(message.text);
 
     if (parsedCommand) {
@@ -241,7 +269,9 @@ export class ChatOrchestrator {
           return;
         }
 
+        this.releaseSessionBinding(chatKey);
         this.stateStore.setActiveAgent(chatKey, agentId);
+        await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(message.chatId, `Active agent switched to '${agentId}'. Session reset; run /new.`);
         return;
       }
@@ -254,6 +284,8 @@ export class ChatOrchestrator {
         const client = await this.agentManager.getClient(state.activeAgentId);
         const sessionId = await client.newSession(this.agentManager.getAgentCwd(state.activeAgentId));
         this.stateStore.setSession(chatKey, sessionId);
+        await this.bindSession(chatKey, message.chatId, state.activeAgentId, sessionId);
+        await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(
           message.chatId,
           `Session created.\nAgent: ${state.activeAgentId}\nSession ID: ${sessionId}`,
@@ -263,9 +295,12 @@ export class ChatOrchestrator {
       case "status": {
         await this.channel.sendMessage(
           message.chatId,
-          [`Agent: ${state.activeAgentId}`, `Session: ${state.sessionId ?? "(none)"}`, `Turn: ${state.activeTurnId ?? "idle"}`].join(
-            "\n",
-          ),
+          [
+            `Agent: ${state.activeAgentId}`,
+            `Session: ${state.sessionId ?? "(none)"}`,
+            `Turn: ${state.activeTurnId ?? "idle"}`,
+            `Commands: ${state.availableCommands.length === 0 ? "(none)" : state.availableCommands.map(({ name }) => `/${name}`).join(", ")}`,
+          ].join("\n"),
         );
         return;
       }
@@ -304,40 +339,20 @@ export class ChatOrchestrator {
 
     const turnId = `${Date.now()}-${message.messageId}`;
     this.stateStore.setActiveTurn(chatKey, turnId);
-
-    const client = await this.agentManager.getClient(activeAgentId);
-    let emittedContent = false;
-    let chunkBuffer = "";
-
-    const flushChunkBuffer = async (): Promise<void> => {
-      if (!chunkBuffer) {
-        return;
-      }
-      emittedContent = true;
-      const payload = chunkBuffer;
-      chunkBuffer = "";
-      await sendChunkedMessage(this.channel, message.chatId, payload);
+    const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, sessionId);
+    sessionBinding.activeTurn = {
+      turnId,
+      emittedContent: false,
+      chunkBuffer: "",
     };
 
-    const unsubscribe = client.onSessionUpdate(sessionId, async (update) => {
-      await this.setTypingIfSupported(message.chatId);
-      const events = renderEventsFromUpdate(update);
-      for (const event of events) {
-        if (event.kind === "chunk") {
-          chunkBuffer += event.text;
-          continue;
-        }
-        emittedContent = true;
-        await flushChunkBuffer();
-        await this.channel.sendMessage(message.chatId, event.text);
-      }
-    });
+    const client = await this.agentManager.getClient(activeAgentId);
 
     try {
       await this.setTypingIfSupported(message.chatId);
       await client.prompt(sessionId, message.text);
-      await flushChunkBuffer();
-      if (!emittedContent) {
+      await this.flushChunkBuffer(sessionBinding);
+      if (!sessionBinding.activeTurn?.emittedContent) {
         await this.channel.sendMessage(
           message.chatId,
           "No textual updates were emitted by the agent during this turn.",
@@ -348,14 +363,114 @@ export class ChatOrchestrator {
       this.logger.error({ error: err, chatKey, sessionId, agentId: activeAgentId }, "Prompt execution failed");
       await this.channel.sendMessage(message.chatId, `Prompt failed: ${err}`);
     } finally {
-      unsubscribe();
-
+      if (sessionBinding.activeTurn?.turnId === turnId) {
+        sessionBinding.activeTurn = undefined;
+      }
       const latest = this.stateStore.get(chatKey);
       if (latest?.activeTurnId === turnId) {
         this.stateStore.setActiveTurn(chatKey, undefined);
       }
       this.typingLastSentAtByChat.delete(message.chatId);
     }
+  }
+
+  private async bindSession(
+    chatKey: string,
+    chatId: string,
+    agentId: string,
+    sessionId: string,
+  ): Promise<SessionBinding> {
+    const existing = this.sessionBindings.get(chatKey);
+    if (existing && existing.sessionId === sessionId && existing.agentId === agentId) {
+      return existing;
+    }
+
+    this.releaseSessionBinding(chatKey);
+
+    const client = await this.agentManager.getClient(agentId);
+    const binding: SessionBinding = {
+      chatId,
+      agentId,
+      sessionId,
+      unsubscribe: () => undefined,
+    };
+
+    binding.unsubscribe = client.onSessionUpdate(sessionId, async (update) => {
+      await this.handleSessionUpdate(chatKey, binding, update);
+    });
+
+    this.sessionBindings.set(chatKey, binding);
+    this.stateStore.setAvailableCommands(chatKey, client.getAvailableCommands(sessionId));
+    return binding;
+  }
+
+  private releaseSessionBinding(chatKey: string): void {
+    const existing = this.sessionBindings.get(chatKey);
+    if (!existing) {
+      return;
+    }
+    existing.unsubscribe();
+    this.sessionBindings.delete(chatKey);
+  }
+
+  private async handleSessionUpdate(chatKey: string, binding: SessionBinding, update: SessionUpdate): Promise<void> {
+    const availableCommands = extractAvailableCommands(update);
+    if (availableCommands) {
+      this.stateStore.setAvailableCommands(chatKey, availableCommands);
+      await this.syncCommands(chatKey, binding.chatId);
+    }
+
+    if (!binding.activeTurn) {
+      return;
+    }
+
+    await this.setTypingIfSupported(binding.chatId);
+    const events = renderEventsFromUpdate(update);
+    for (const event of events) {
+      if (event.kind === "chunk") {
+        binding.activeTurn.chunkBuffer += event.text;
+        continue;
+      }
+      binding.activeTurn.emittedContent = true;
+      await this.flushChunkBuffer(binding);
+      await this.channel.sendMessage(binding.chatId, event.text);
+    }
+  }
+
+  private async flushChunkBuffer(binding: SessionBinding): Promise<void> {
+    if (!binding.activeTurn?.chunkBuffer) {
+      return;
+    }
+
+    binding.activeTurn.emittedContent = true;
+    const payload = binding.activeTurn.chunkBuffer;
+    binding.activeTurn.chunkBuffer = "";
+    await sendChunkedMessage(this.channel, binding.chatId, payload);
+  }
+
+  private async syncCommands(chatKey: string, chatId: string): Promise<void> {
+    if (!this.channel.syncCommands) {
+      return;
+    }
+
+    const state = this.stateStore.get(chatKey);
+    if (!state) {
+      return;
+    }
+
+    await this.channel.syncCommands(
+      chatId,
+      mergeCommandDefinitions(
+        state.availableCommands.map((command) => this.toChatCommandDefinition(command)),
+      ),
+    );
+  }
+
+  private toChatCommandDefinition(command: AvailableCommand): { name: string; description: string } {
+    return {
+      name: command.name,
+      description: command.description,
+    };
   }
 
   private async setTypingIfSupported(chatId: string): Promise<void> {

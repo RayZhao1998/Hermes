@@ -1,5 +1,7 @@
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
 import type {
+  AvailableCommand,
+  AvailableCommandsUpdate,
   InitializeResponse,
   PromptResponse,
   RequestPermissionRequest,
@@ -22,6 +24,7 @@ export interface ACPClientOptions {
 export class ACPClient {
   private readonly connection: ClientSideConnection;
   private readonly listeners = new Map<string, Set<SessionUpdateListener>>();
+  private readonly availableCommandsBySession = new Map<string, AvailableCommand[]>();
   private readonly logger: Logger;
   private initialized = false;
   private initResponse?: InitializeResponse;
@@ -110,6 +113,10 @@ export class ACPClient {
     return this.connection.signal;
   }
 
+  getAvailableCommands(sessionId: string): AvailableCommand[] {
+    return [...(this.availableCommandsBySession.get(sessionId) ?? [])];
+  }
+
   private async sessionUpdate(params: SessionNotification): Promise<void> {
     this.logger.info(
       {
@@ -118,6 +125,11 @@ export class ACPClient {
       },
       "ACP session/update received",
     );
+
+    const availableCommands = extractAvailableCommands(params.update);
+    if (availableCommands) {
+      this.availableCommandsBySession.set(params.sessionId, availableCommands);
+    }
 
     const scoped = this.listeners.get(params.sessionId);
     if (!scoped || scoped.size === 0) {
@@ -165,4 +177,17 @@ export class ACPClient {
       throw new Error("ACP client is not initialized.");
     }
   }
+}
+
+export function extractAvailableCommands(update: SessionUpdate): AvailableCommand[] | null {
+  const availableCommandsUpdate = update as SessionUpdate & AvailableCommandsUpdate;
+  if (availableCommandsUpdate.sessionUpdate !== "available_commands_update") {
+    return null;
+  }
+
+  if (!Array.isArray(availableCommandsUpdate.availableCommands)) {
+    return null;
+  }
+
+  return availableCommandsUpdate.availableCommands;
 }

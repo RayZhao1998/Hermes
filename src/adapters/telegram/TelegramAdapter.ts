@@ -8,7 +8,10 @@ import type { Logger } from "pino";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import type { ChannelAdapter } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
-import { commandDefinitions } from "../../core/router/CommandRouter.js";
+import {
+  commandDefinitions,
+  type ChatCommandDefinition,
+} from "../../core/router/CommandRouter.js";
 
 let globalProxyConfigured = false;
 
@@ -151,6 +154,13 @@ export class TelegramAdapter implements ChannelAdapter {
     }
   }
 
+  async syncCommands(chatId: string, commands: readonly ChatCommandDefinition[]): Promise<void> {
+    await registerTelegramCommands(this.token, this.logger, commands, {
+      type: "chat",
+      chat_id: chatId,
+    });
+  }
+
   async start(): Promise<void> {
     await this.bot.initialize();
     try {
@@ -217,17 +227,53 @@ interface TelegramApiResponse {
   description?: string;
 }
 
-export async function registerTelegramCommands(token: string, logger: Logger): Promise<void> {
+interface TelegramChatCommandScope {
+  type: "chat";
+  chat_id: string;
+}
+
+function toTelegramCommandDefinitions(
+  commands: readonly ChatCommandDefinition[],
+  logger: Logger,
+): Array<{ command: string; description: string }> {
+  const seen = new Set<string>();
+  const normalized: Array<{ command: string; description: string }> = [];
+
+  for (const command of commands) {
+    if (!/^[a-z0-9_]{1,32}$/u.test(command.name)) {
+      logger.warn({ command: command.name }, "Skipping Telegram command with unsupported name");
+      continue;
+    }
+
+    if (seen.has(command.name)) {
+      continue;
+    }
+
+    seen.add(command.name);
+    normalized.push({
+      command: command.name,
+      description: command.description.slice(0, 256),
+    });
+  }
+
+  return normalized.slice(0, 100);
+}
+
+export async function registerTelegramCommands(
+  token: string,
+  logger: Logger,
+  commands: readonly ChatCommandDefinition[] = commandDefinitions,
+  scope?: TelegramChatCommandScope,
+): Promise<void> {
+  const telegramCommands = toTelegramCommandDefinitions(commands, logger);
   const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      commands: commandDefinitions.map(({ name, description }) => ({
-        command: name,
-        description,
-      })),
+      commands: telegramCommands,
+      ...(scope ? { scope } : {}),
     }),
   });
 
@@ -237,7 +283,7 @@ export async function registerTelegramCommands(token: string, logger: Logger): P
   }
 
   logger.info(
-    { commands: commandDefinitions.map(({ name }) => name) },
+    { chatId: scope?.chat_id, commands: telegramCommands.map(({ command }) => command) },
     "Telegram bot commands registered",
   );
 }

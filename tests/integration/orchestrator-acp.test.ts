@@ -7,11 +7,13 @@ import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js"
 import { ChatOrchestrator } from "../../src/core/orchestrator/ChatOrchestrator.js";
 import { CommandRouter } from "../../src/core/router/CommandRouter.js";
 import { InMemoryChatStateStore } from "../../src/core/state/InMemoryChatStateStore.js";
+import type { ChatCommandDefinition } from "../../src/core/router/CommandRouter.js";
 
 class MockChannelAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
 
   messages: Array<{ chatId: string; text: string }> = [];
+  syncedCommands: Array<{ chatId: string; commands: readonly ChatCommandDefinition[] }> = [];
   typingSignals: string[] = [];
   private handler?: (msg: MessageEnvelope) => Promise<void>;
 
@@ -33,6 +35,10 @@ class MockChannelAdapter implements ChannelAdapter {
 
   async setTyping(chatId: string): Promise<void> {
     this.typingSignals.push(chatId);
+  }
+
+  async syncCommands(chatId: string, commands: readonly ChatCommandDefinition[]): Promise<void> {
+    this.syncedCommands.push({ chatId, commands });
   }
 
   async emit(text: string, overrides?: Partial<MessageEnvelope>): Promise<void> {
@@ -133,6 +139,46 @@ describe("ChatOrchestrator + ACP integration", () => {
     expect(merged).toContain("permission:allow");
     expect(merged).not.toContain("Turn complete.");
     expect(adapter.messages.length).toBe(1);
+  });
+
+  it("syncs ACP slash commands after session creation", async () => {
+    await adapter.emit("/new");
+
+    await waitFor(() => adapter.syncedCommands.length >= 2);
+
+    expect(adapter.syncedCommands.at(-1)).toEqual({
+      chatId: "1001",
+      commands: [
+        { name: "agents", description: "List configured agents" },
+        { name: "agent", description: "Switch the active agent" },
+        { name: "new", description: "Create a new ACP session" },
+        { name: "status", description: "Show current chat state" },
+        { name: "cancel", description: "Cancel the active turn" },
+        { name: "explain", description: "Explain the selected code or text." },
+        { name: "summarize", description: "Summarize the latest context." },
+      ],
+    });
+  });
+
+  it("resets chat-scoped commands when the active agent changes", async () => {
+    await adapter.emit("/new");
+    await waitFor(() => adapter.syncedCommands.length >= 2);
+
+    adapter.syncedCommands.length = 0;
+    await adapter.emit("/agent fake");
+
+    expect(adapter.syncedCommands).toEqual([
+      {
+        chatId: "1001",
+        commands: [
+          { name: "agents", description: "List configured agents" },
+          { name: "agent", description: "Switch the active agent" },
+          { name: "new", description: "Create a new ACP session" },
+          { name: "status", description: "Show current chat state" },
+          { name: "cancel", description: "Cancel the active turn" },
+        ],
+      },
+    ]);
   });
 
   it("cancels active turn via /cancel", async () => {

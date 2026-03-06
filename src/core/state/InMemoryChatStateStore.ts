@@ -1,8 +1,11 @@
+import type { AvailableCommand } from "@agentclientprotocol/sdk";
+
 export interface ChatState {
   chatKey: string;
   activeAgentId: string;
   sessionId?: string;
   activeTurnId?: string;
+  availableCommands: AvailableCommand[];
 }
 
 export class InMemoryChatStateStore {
@@ -21,6 +24,7 @@ export class InMemoryChatStateStore {
     const created: ChatState = {
       chatKey,
       activeAgentId: defaultAgentId,
+      availableCommands: [],
     };
     this.states.set(chatKey, created);
     return created;
@@ -31,6 +35,7 @@ export class InMemoryChatStateStore {
     state.activeAgentId = activeAgentId;
     state.sessionId = undefined;
     state.activeTurnId = undefined;
+    state.availableCommands = [];
     return state;
   }
 
@@ -38,12 +43,19 @@ export class InMemoryChatStateStore {
     const state = this.require(chatKey);
     state.sessionId = sessionId;
     state.activeTurnId = undefined;
+    state.availableCommands = [];
     return state;
   }
 
   setActiveTurn(chatKey: string, turnId?: string): ChatState {
     const state = this.require(chatKey);
     state.activeTurnId = turnId;
+    return state;
+  }
+
+  setAvailableCommands(chatKey: string, availableCommands: AvailableCommand[]): ChatState {
+    const state = this.require(chatKey);
+    state.availableCommands = [...availableCommands];
     return state;
   }
 
