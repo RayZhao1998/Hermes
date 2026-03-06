@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import type { AvailableCommand, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
+import type { AvailableCommand, McpServer, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
 import type { ToolApprovalMode } from "../../config/schema.js";
@@ -223,6 +223,17 @@ function renderToolCallText(toolCall: ToolCallRenderState): string {
   return sections.join("\n");
 }
 
+function getMcpServerType(server: McpServer): "http" | "sse" | "stdio" {
+  return "type" in server ? server.type : "stdio";
+}
+
+function formatMcpServers(servers: McpServer[]): string {
+  if (servers.length === 0) {
+    return "(none)";
+  }
+  return servers.map((server) => `${server.name} (${getMcpServerType(server)})`).join(", ");
+}
+
 export interface ChatOrchestratorOptions {
   channel: ChannelAdapter;
   stateStore: InMemoryChatStateStore;
@@ -336,7 +347,10 @@ export class ChatOrchestrator {
         }
 
         const client = await this.agentManager.getClient(state.activeAgentId);
-        const sessionId = await client.newSession(this.agentManager.getAgentCwd(state.activeAgentId));
+        const sessionId = await client.newSession(
+          this.agentManager.getAgentCwd(state.activeAgentId),
+          this.agentManager.getAgentMcpServers(state.activeAgentId),
+        );
         this.stateStore.setSession(chatKey, sessionId);
         await this.bindSession(chatKey, message.chatId, state.activeAgentId, sessionId);
         await this.syncCommands(chatKey, message.chatId);
@@ -347,12 +361,14 @@ export class ChatOrchestrator {
         return;
       }
       case "status": {
+        const mcpServers = this.agentManager.getAgentMcpServers(state.activeAgentId);
         await this.channel.sendMessage(
           message.chatId,
           [
             `Agent: ${state.activeAgentId}`,
             `Session: ${state.sessionId ?? "(none)"}`,
             `Turn: ${state.activeTurnId ?? "idle"}`,
+            `MCP servers: ${formatMcpServers(mcpServers)}`,
             `Commands: ${state.availableCommands.length === 0 ? "(none)" : state.availableCommands.map(({ name }) => `/${name}`).join(", ")}`,
           ].join("\n"),
         );

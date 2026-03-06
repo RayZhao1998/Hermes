@@ -179,6 +179,20 @@ describe("ChatOrchestrator + ACP integration", () => {
           args: [tsxCli, fakeAgent],
           cwd: process.cwd(),
           env: {},
+          mcpServers: [
+            {
+              name: "filesystem",
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-filesystem", process.cwd()],
+              env: [],
+            },
+            {
+              type: "http",
+              name: "docs",
+              url: "https://mcp.example.com",
+              headers: [],
+            },
+          ],
           default: true,
         },
       ],
@@ -286,6 +300,25 @@ describe("ChatOrchestrator + ACP integration", () => {
         { name: "summarize", description: "Summarize the latest context." },
       ],
     });
+  });
+
+  it("shows configured MCP servers in /status", async () => {
+    await adapter.emit("/status");
+
+    const status = adapter.messages.at(-1)?.text;
+    expect(status).toContain("Agent: fake");
+    expect(status).toContain("MCP servers: filesystem (stdio), docs (http)");
+  });
+
+  it("passes configured MCP servers into session/new", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("please report mcp");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[mcp:filesystem,docs]")));
+
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain("[mcp:filesystem,docs]");
   });
 
   it("resets chat-scoped commands when the active agent changes", async () => {

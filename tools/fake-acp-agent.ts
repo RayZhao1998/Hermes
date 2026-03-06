@@ -18,6 +18,7 @@ import { Readable, Writable } from "node:stream";
 
 interface SessionState {
   abortController?: AbortController;
+  mcpServers: NewSessionRequest["mcpServers"];
 }
 
 class FakeAgent implements Agent {
@@ -38,9 +39,9 @@ class FakeAgent implements Agent {
     return {};
   }
 
-  async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
+  async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomUUID();
-    this.sessions.set(sessionId, {});
+    this.sessions.set(sessionId, { mcpServers: params.mcpServers });
     await this.connection.sessionUpdate({
       sessionId,
       update: {
@@ -96,6 +97,20 @@ class FakeAgent implements Agent {
         },
       });
       await sleep(80);
+    }
+
+    if (text.toLowerCase().includes("report mcp")) {
+      const names = session.mcpServers.map((server) => server.name).join(",") || "(none)";
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: ` [mcp:${names}]`,
+          },
+        },
+      });
     }
 
     await this.connection.sessionUpdate({

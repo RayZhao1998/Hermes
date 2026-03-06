@@ -3,6 +3,7 @@ import type {
   AvailableCommand,
   AvailableCommandsUpdate,
   InitializeResponse,
+  McpServer,
   PromptResponse,
   PermissionOption,
   RequestPermissionRequest,
@@ -78,11 +79,11 @@ export class ACPClient {
     return response;
   }
 
-  async newSession(cwd: string): Promise<string> {
+  async newSession(cwd: string, mcpServers: McpServer[] = []): Promise<string> {
     this.ensureInitialized();
     const response = await this.connection.newSession({
       cwd,
-      mcpServers: [],
+      mcpServers,
     });
     return response.sessionId;
   }

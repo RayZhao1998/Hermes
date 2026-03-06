@@ -1,7 +1,39 @@
 import { z } from "zod";
+import type { McpServer } from "@agentclientprotocol/sdk";
 
 const logLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 const toolApprovalModeSchema = z.enum(["auto", "manual"]);
+const envVariableSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+});
+const httpHeaderSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+});
+const mcpMetaSchema = z.record(z.string(), z.unknown()).nullable().optional();
+const mcpServerHttpSchema = z.object({
+  type: z.literal("http"),
+  name: z.string().min(1),
+  url: z.string().min(1),
+  headers: z.array(httpHeaderSchema).default([]),
+  _meta: mcpMetaSchema,
+});
+const mcpServerSseSchema = z.object({
+  type: z.literal("sse"),
+  name: z.string().min(1),
+  url: z.string().min(1),
+  headers: z.array(httpHeaderSchema).default([]),
+  _meta: mcpMetaSchema,
+});
+const mcpServerStdioSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.array(envVariableSchema).default([]),
+  _meta: mcpMetaSchema,
+});
+const mcpServerSchema = z.union([mcpServerHttpSchema, mcpServerSseSchema, mcpServerStdioSchema]) satisfies z.ZodType<McpServer>;
 
 const agentConfigSchema = z.object({
   id: z.string().min(1),
@@ -9,6 +41,7 @@ const agentConfigSchema = z.object({
   args: z.array(z.string()).default([]),
   cwd: z.string().default("."),
   env: z.record(z.string(), z.string()).default({}),
+  mcpServers: z.array(mcpServerSchema).default([]),
   default: z.boolean().optional(),
 });
 

@@ -39,6 +39,7 @@ export TELEGRAM_BOT_TOKEN="<your-token>"
 - `security.allowedUserIds`: e.g. `telegram:987654321`
 - `tools.approvalMode`: `auto` or `manual` (`manual` uses Telegram action buttons for approval)
 - `agents`: command/args/cwd/env for ACP agents
+- `agents[].mcpServers`: optional MCP server list passed to `session/new`
 
 4. Start Hermes:
 
@@ -51,7 +52,7 @@ npm run dev
 - `/agents` list configured agents and runtime status
 - `/agent <id>` switch active agent for current chat (resets session)
 - `/new` create a new ACP session
-- `/status` show current agent/session/turn state
+- `/status` show current agent/session/turn state, including configured MCP servers
 - `/cancel` cancel in-flight prompt turn
 - ACP slash commands published by the active session are registered dynamically for the current Telegram chat and are executed by sending the raw `/<command> ...` prompt to the agent.
 

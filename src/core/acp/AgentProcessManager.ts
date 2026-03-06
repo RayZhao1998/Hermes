@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { McpServer } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import type { LoadedAgentConfig } from "../../config/schema.js";
 import { ACPClient } from "./ACPClient.js";
@@ -56,6 +57,11 @@ export class AgentProcessManager {
   getAgentCwd(agentId: string): string {
     const record = this.requireRecord(agentId);
     return record.config.cwd;
+  }
+
+  getAgentMcpServers(agentId: string): McpServer[] {
+    const record = this.requireRecord(agentId);
+    return record.config.mcpServers;
   }
 
   listAgents(): AgentRuntimeInfo[] {

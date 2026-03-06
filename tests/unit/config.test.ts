@@ -18,7 +18,7 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    default: true\n`,
+      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
       "utf8",
     );
 
@@ -29,6 +29,20 @@ describe("config loading", () => {
     expect(path.isAbsolute(loaded.agents[0].cwd)).toBe(true);
     expect(loaded.telegram.token).toBe("abc");
     expect(loaded.tools.approvalMode).toBe("manual");
+    expect(loaded.agents[0]?.mcpServers).toEqual([
+      {
+        name: "filesystem",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        env: [{ name: "NODE_ENV", value: "test" }],
+      },
+      {
+        type: "http",
+        name: "docs",
+        url: "https://mcp.example.com",
+        headers: [{ name: "Authorization", value: "Bearer token" }],
+      },
+    ]);
   });
 
   it("throws when telegram token env is missing", async () => {
@@ -65,5 +79,16 @@ describe("config loading", () => {
     });
 
     expect(parsed.tools.approvalMode).toBe("auto");
+  });
+
+  it("defaults agent MCP servers to an empty list", () => {
+    const parsed = hermesConfigSchema.parse({
+      telegram: { enabled: true, tokenEnv: "TG" },
+      agents: [
+        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+      ],
+    });
+
+    expect(parsed.agents[0]?.mcpServers).toEqual([]);
   });
 });
