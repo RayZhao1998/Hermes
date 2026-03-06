@@ -4,6 +4,7 @@ import type {
   AvailableCommandsUpdate,
   InitializeResponse,
   PromptResponse,
+  PermissionOption,
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionNotification,
@@ -14,6 +15,16 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 type SessionUpdateListener = (update: SessionUpdate) => Promise<void> | void;
+type PermissionRequestHandler = (
+  params: RequestPermissionRequest,
+  signal: AbortSignal,
+) => Promise<RequestPermissionResponse> | RequestPermissionResponse;
+
+interface PendingPermissionRequest {
+  abortController: AbortController;
+  resolve: (response: RequestPermissionResponse) => void;
+  settled: boolean;
+}
 
 export interface ACPClientOptions {
   clientName: string;
@@ -24,6 +35,8 @@ export interface ACPClientOptions {
 export class ACPClient {
   private readonly connection: ClientSideConnection;
   private readonly listeners = new Map<string, Set<SessionUpdateListener>>();
+  private readonly permissionHandlers = new Map<string, PermissionRequestHandler>();
+  private readonly pendingPermissionsBySession = new Map<string, Set<PendingPermissionRequest>>();
   private readonly availableCommandsBySession = new Map<string, AvailableCommand[]>();
   private readonly logger: Logger;
   private initialized = false;
@@ -89,6 +102,7 @@ export class ACPClient {
 
   async cancel(sessionId: string): Promise<void> {
     this.ensureInitialized();
+    this.cancelPendingPermissionRequests(sessionId);
     await this.connection.cancel({ sessionId });
   }
 
@@ -117,6 +131,17 @@ export class ACPClient {
     return [...(this.availableCommandsBySession.get(sessionId) ?? [])];
   }
 
+  onRequestPermission(sessionId: string, handler: PermissionRequestHandler): () => void {
+    this.permissionHandlers.set(sessionId, handler);
+
+    return () => {
+      const existing = this.permissionHandlers.get(sessionId);
+      if (existing === handler) {
+        this.permissionHandlers.delete(sessionId);
+      }
+    };
+  }
+
   private async sessionUpdate(params: SessionNotification): Promise<void> {
     this.logger.info(
       {
@@ -143,38 +168,116 @@ export class ACPClient {
   }
 
   private async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    const preferred = params.options.find((option) => option.kind === "allow_once" || option.kind === "allow_always");
-    const selected = preferred ?? params.options[0];
+    const handler = this.permissionHandlers.get(params.sessionId);
+    if (!handler) {
+      const selected = this.pickPreferredPermissionOption(params.options);
 
-    if (!selected) {
-      this.logger.warn({ sessionId: params.sessionId }, "No permission option provided by agent; falling back to cancelled");
+      if (!selected) {
+        this.logger.warn({ sessionId: params.sessionId }, "No permission option provided by agent; falling back to cancelled");
+        return {
+          outcome: {
+            outcome: "cancelled",
+          },
+        };
+      }
+
+      this.logger.info(
+        {
+          sessionId: params.sessionId,
+          toolCall: params.toolCall.title,
+          optionId: selected.optionId,
+        },
+        "Auto-approved session/request_permission",
+      );
+
       return {
         outcome: {
-          outcome: "cancelled",
+          outcome: "selected",
+          optionId: selected.optionId,
         },
       };
     }
 
-    this.logger.info(
-      {
-        sessionId: params.sessionId,
-        toolCall: params.toolCall.title,
-        optionId: selected.optionId,
-      },
-      "Auto-approved session/request_permission",
-    );
+    const abortController = new AbortController();
+    return await new Promise<RequestPermissionResponse>((resolve) => {
+      const pending: PendingPermissionRequest = {
+        abortController,
+        resolve: (response) => {
+          if (pending.settled) {
+            return;
+          }
+          pending.settled = true;
+          this.removePendingPermission(params.sessionId, pending);
+          resolve(response);
+        },
+        settled: false,
+      };
 
-    return {
-      outcome: {
-        outcome: "selected",
-        optionId: selected.optionId,
-      },
-    };
+      this.addPendingPermission(params.sessionId, pending);
+
+      void Promise.resolve(handler(params, abortController.signal))
+        .then((response) => {
+          pending.resolve(response);
+        })
+        .catch((error) => {
+          const err = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            {
+              sessionId: params.sessionId,
+              toolCall: params.toolCall.title,
+              error: err,
+            },
+            "Permission handler failed; cancelling tool call",
+          );
+          pending.resolve({
+            outcome: {
+              outcome: "cancelled",
+            },
+          });
+        });
+    });
   }
 
   private ensureInitialized(): void {
     if (!this.initialized) {
       throw new Error("ACP client is not initialized.");
+    }
+  }
+
+  private pickPreferredPermissionOption(options: PermissionOption[]): PermissionOption | undefined {
+    return options.find((option) => option.kind === "allow_once" || option.kind === "allow_always") ?? options[0];
+  }
+
+  private addPendingPermission(sessionId: string, pending: PendingPermissionRequest): void {
+    const existing = this.pendingPermissionsBySession.get(sessionId) ?? new Set<PendingPermissionRequest>();
+    existing.add(pending);
+    this.pendingPermissionsBySession.set(sessionId, existing);
+  }
+
+  private removePendingPermission(sessionId: string, pending: PendingPermissionRequest): void {
+    const existing = this.pendingPermissionsBySession.get(sessionId);
+    if (!existing) {
+      return;
+    }
+    existing.delete(pending);
+    if (existing.size === 0) {
+      this.pendingPermissionsBySession.delete(sessionId);
+    }
+  }
+
+  private cancelPendingPermissionRequests(sessionId: string): void {
+    const pendingRequests = this.pendingPermissionsBySession.get(sessionId);
+    if (!pendingRequests) {
+      return;
+    }
+
+    for (const pending of pendingRequests) {
+      pending.abortController.abort();
+      pending.resolve({
+        outcome: {
+          outcome: "cancelled",
+        },
+      });
     }
   }
 }

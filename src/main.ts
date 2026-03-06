@@ -27,6 +27,7 @@ async function main(): Promise<void> {
     router: commandRouter,
     agentManager,
     accessControl: config.security,
+    toolApprovalMode: config.tools.approvalMode,
     logger: logger.child({ component: "orchestrator" }),
   });
 

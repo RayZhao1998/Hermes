@@ -1,7 +1,8 @@
 import type { Logger } from "pino";
-import type { AvailableCommand, SessionUpdate } from "@agentclientprotocol/sdk";
+import type { AvailableCommand, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
+import type { ToolApprovalMode } from "../../config/schema.js";
 import {
   CommandRouter,
   mergeCommandDefinitions,
@@ -47,6 +48,7 @@ interface ToolCallRenderState {
   status?: string;
   contentMessages: string[];
   rawOutput?: string;
+  rendered?: string;
   message?: OutboundMessageHandle;
 }
 
@@ -227,6 +229,7 @@ export interface ChatOrchestratorOptions {
   router: CommandRouter;
   agentManager: AgentProcessManager;
   accessControl: AccessControlConfig;
+  toolApprovalMode: ToolApprovalMode;
   logger: Logger;
 }
 
@@ -236,6 +239,7 @@ export class ChatOrchestrator {
   private readonly router: CommandRouter;
   private readonly agentManager: AgentProcessManager;
   private readonly accessControl: AccessControlConfig;
+  private readonly toolApprovalMode: ToolApprovalMode;
   private readonly logger: Logger;
   private readonly typingLastSentAtByChat = new Map<string, number>();
   private readonly sessionBindings = new Map<string, SessionBinding>();
@@ -246,6 +250,7 @@ export class ChatOrchestrator {
     this.router = options.router;
     this.agentManager = options.agentManager;
     this.accessControl = options.accessControl;
+    this.toolApprovalMode = options.toolApprovalMode;
     this.logger = options.logger;
   }
 
@@ -447,6 +452,72 @@ export class ChatOrchestrator {
       pendingSessionUpdates: Promise.resolve(),
     };
 
+    const unsubscribePermission = this.toolApprovalMode === "manual"
+      ? client.onRequestPermission(sessionId, async (params, signal): Promise<RequestPermissionResponse> => {
+          if (!this.channel.requestPermission) {
+            this.logger.warn(
+              { chatId, sessionId, toolCallId: params.toolCall.toolCallId },
+              "Channel does not support interactive permission approval; cancelling tool call",
+            );
+            return {
+              outcome: {
+                outcome: "cancelled",
+              },
+            };
+          }
+
+          const existingToolCall = binding.activeTurn?.toolCalls.get(params.toolCall.toolCallId);
+          const fallbackToolCall: ToolCallRenderState = {
+            toolCallId: params.toolCall.toolCallId,
+            title: params.toolCall.title ?? undefined,
+            status: params.toolCall.status ?? undefined,
+            contentMessages: [],
+            rawOutput: undefined,
+            message: undefined,
+          };
+          const toolCallForRender = existingToolCall ?? fallbackToolCall;
+
+          const decision = await this.channel.requestPermission(
+            chatId,
+            {
+              sessionId: params.sessionId,
+              toolCallId: params.toolCall.toolCallId,
+              title: params.toolCall.title ?? undefined,
+              status: params.toolCall.status ?? undefined,
+              renderedText: renderToolCallText(toolCallForRender) || undefined,
+              message: toolCallForRender.message
+                ? {
+                    chatId: toolCallForRender.message.chatId,
+                    messageId: toolCallForRender.message.messageId,
+                    threadId: toolCallForRender.message.threadId,
+                  }
+                : undefined,
+              options: params.options.map((option) => ({
+                optionId: option.optionId,
+                kind: option.kind,
+                name: option.name,
+              })),
+            },
+            signal,
+          );
+
+          if (decision.outcome === "cancelled") {
+            return {
+              outcome: {
+                outcome: "cancelled",
+              },
+            };
+          }
+
+          return {
+            outcome: {
+              outcome: "selected",
+              optionId: decision.optionId,
+            },
+          };
+        })
+      : () => undefined;
+
     binding.unsubscribe = client.onSessionUpdate(sessionId, async (update) => {
       binding.pendingSessionUpdates = binding.pendingSessionUpdates
         .catch(() => undefined)
@@ -456,6 +527,11 @@ export class ChatOrchestrator {
 
       await binding.pendingSessionUpdates;
     });
+    const unsubscribeUpdates = binding.unsubscribe;
+    binding.unsubscribe = () => {
+      unsubscribePermission();
+      unsubscribeUpdates();
+    };
 
     this.sessionBindings.set(chatKey, binding);
     this.stateStore.setAvailableCommands(chatKey, client.getAvailableCommands(sessionId));
@@ -527,6 +603,7 @@ export class ChatOrchestrator {
       status: undefined,
       contentMessages: [],
       rawOutput: undefined,
+      rendered: undefined,
       message: undefined,
     };
 
@@ -550,11 +627,16 @@ export class ChatOrchestrator {
       return;
     }
 
+    if (toolCall.rendered === rendered) {
+      return;
+    }
+
     if (toolCall.message && this.channel.editMessage) {
       toolCall.message = await this.channel.editMessage(toolCall.message, rendered);
     } else {
       toolCall.message = await this.channel.sendMessage(binding.chatId, rendered);
     }
+    toolCall.rendered = rendered;
 
     binding.activeTurn.toolCalls.set(event.toolCallId, toolCall);
   }

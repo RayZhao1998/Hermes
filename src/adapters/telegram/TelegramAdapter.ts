@@ -3,17 +3,31 @@ import {
   createTelegramAdapter,
   type TelegramAdapter as ChatSdkTelegramAdapter,
 } from "@chat-adapter/telegram";
-import { Chat, type Logger as ChatSdkLogger, type Message, type Thread } from "chat";
+import {
+  Actions,
+  Button,
+  Card,
+  CardText,
+  Chat,
+  type ActionEvent,
+  type ButtonElement,
+  type CardElement,
+  type Logger as ChatSdkLogger,
+  type Message,
+  type Thread,
+} from "chat";
 import type { Logger } from "pino";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import type { ChannelAdapter, OutboundMessageHandle } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
+import type { ToolPermissionDecision, ToolPermissionRequest } from "../../core/channel/PermissionRequest.js";
 import {
   commandDefinitions,
   type ChatCommandDefinition,
 } from "../../core/router/CommandRouter.js";
 
 let globalProxyConfigured = false;
+const PERMISSION_ACTION_ID = "hermes_permission";
 
 function resolveProxyUrl(): string | undefined {
   return (
@@ -85,12 +99,58 @@ class PinoChatSdkLogger implements ChatSdkLogger {
   }
 }
 
+interface PendingPermissionApproval {
+  chatId: string;
+  toolTitle: string;
+  toolText: string;
+  message: OutboundMessageHandle;
+  tokens: string[];
+  optionLabels: Map<string, string>;
+  resolve: (decision: ToolPermissionDecision) => void;
+  settled: boolean;
+  abortListener?: () => void;
+  signal?: AbortSignal;
+}
+
+interface PermissionTokenInfo {
+  approvalId: string;
+  optionId: string;
+}
+
+function styleForPermissionOption(kind: string): "primary" | "danger" | "default" {
+  if (kind.startsWith("allow")) {
+    return "primary";
+  }
+  if (kind.startsWith("reject")) {
+    return "danger";
+  }
+  return "default";
+}
+
+function renderPermissionCard(toolText: string, actions: ButtonElement[]): CardElement {
+  return Card({
+    children: [
+      CardText(toolText),
+      CardText("Approval required before execution."),
+      Actions(actions),
+    ],
+  });
+}
+
+function isTelegramMessageNotModifiedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("message is not modified");
+}
+
 export class TelegramAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
 
   private readonly token: string;
   private readonly telegram: ChatSdkTelegramAdapter;
   private readonly bot: Chat;
+  private readonly pendingApprovals = new Map<string, PendingPermissionApproval>();
+  private readonly approvalTokens = new Map<string, PermissionTokenInfo>();
+  private nextApprovalSequence = 1;
   private onMessageHandler?: (msg: MessageEnvelope) => Promise<void>;
 
   constructor(token: string, private readonly logger: Logger) {
@@ -126,6 +186,10 @@ export class TelegramAdapter implements ChannelAdapter {
 
     this.bot.onSubscribedMessage(async (thread, message) => {
       await this.forwardMessage(thread, message);
+    });
+
+    this.bot.onAction(PERMISSION_ACTION_ID, async (event) => {
+      await this.handlePermissionAction(event);
     });
   }
 
@@ -164,6 +228,13 @@ export class TelegramAdapter implements ChannelAdapter {
         threadId: result.threadId || threadId,
       };
     } catch (error) {
+      if (isTelegramMessageNotModifiedError(error)) {
+        this.logger.debug(
+          { chatId: message.chatId, messageId: message.messageId },
+          "Skipping Telegram edit because the rendered content did not change",
+        );
+        return message;
+      }
       const err = error instanceof Error ? error.message : String(error);
       this.logger.error({ error: err, chatId: message.chatId, messageId: message.messageId }, "Telegram editMessage failed");
       throw error;
@@ -184,6 +255,69 @@ export class TelegramAdapter implements ChannelAdapter {
     await registerTelegramCommands(this.token, this.logger, commands, {
       type: "chat",
       chat_id: chatId,
+    });
+  }
+
+  async requestPermission(
+    chatId: string,
+    request: ToolPermissionRequest,
+    signal?: AbortSignal,
+  ): Promise<ToolPermissionDecision> {
+    if (signal?.aborted) {
+      return { outcome: "cancelled" };
+    }
+
+    const approvalId = this.allocateApprovalId();
+    const tokens: string[] = [];
+    const optionLabels = new Map<string, string>();
+    const actions: ButtonElement[] = request.options.map((option, index) => {
+      const token = this.allocateApprovalToken(approvalId, index);
+      tokens.push(token);
+      optionLabels.set(option.optionId, option.name);
+      this.approvalTokens.set(token, {
+        approvalId,
+        optionId: option.optionId,
+      });
+
+      return Button({
+        id: PERMISSION_ACTION_ID,
+        value: token,
+        label: option.name,
+        style: styleForPermissionOption(option.kind),
+      });
+    });
+
+    const toolTitle = request.title?.trim() || "Untitled tool call";
+    const toolText = request.renderedText?.trim() || `[tool] ${toolTitle}${request.status ? ` (${request.status})` : ""}`;
+    const message = request.message
+      ? await this.updatePermissionMessage(request.message, renderPermissionCard(toolText, actions))
+      : await this.postPermissionMessage(chatId, renderPermissionCard(toolText, actions));
+
+    return await new Promise<ToolPermissionDecision>((resolve) => {
+      const approval: PendingPermissionApproval = {
+        chatId,
+        toolTitle,
+        toolText,
+        message,
+        tokens,
+        optionLabels,
+        resolve,
+        settled: false,
+        signal,
+      };
+
+      if (signal) {
+        approval.abortListener = () => {
+          void this.settlePendingApproval(approvalId, { outcome: "cancelled" }, "Permission request cancelled.");
+        };
+        signal.addEventListener("abort", approval.abortListener, { once: true });
+      }
+
+      this.pendingApprovals.set(approvalId, approval);
+
+      if (signal?.aborted) {
+        void this.settlePendingApproval(approvalId, { outcome: "cancelled" }, "Permission request cancelled.");
+      }
     });
   }
 
@@ -245,6 +379,105 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private toThreadId(chatId: string): string {
     return this.telegram.encodeThreadId({ chatId });
+  }
+
+  private allocateApprovalId(): string {
+    const value = this.nextApprovalSequence.toString(36);
+    this.nextApprovalSequence += 1;
+    return `p${value}`;
+  }
+
+  private allocateApprovalToken(approvalId: string, index: number): string {
+    return `${approvalId}${index.toString(36)}`;
+  }
+
+  private async handlePermissionAction(event: ActionEvent): Promise<void> {
+    const token = event.value;
+    if (!token) {
+      return;
+    }
+
+    const tokenInfo = this.approvalTokens.get(token);
+    if (!tokenInfo) {
+      return;
+    }
+
+    const approval = this.pendingApprovals.get(tokenInfo.approvalId);
+    if (!approval || approval.settled) {
+      return;
+    }
+
+    const label = approval.optionLabels.get(tokenInfo.optionId) ?? tokenInfo.optionId;
+    await this.settlePendingApproval(
+      tokenInfo.approvalId,
+      { outcome: "selected", optionId: tokenInfo.optionId },
+      `Permission resolved for ${approval.toolTitle}: ${label}`,
+    );
+  }
+
+  private async settlePendingApproval(
+    approvalId: string,
+    decision: ToolPermissionDecision,
+    suffixText: string,
+  ): Promise<void> {
+    const approval = this.pendingApprovals.get(approvalId);
+    if (!approval || approval.settled) {
+      return;
+    }
+
+    approval.settled = true;
+    this.pendingApprovals.delete(approvalId);
+    for (const token of approval.tokens) {
+      this.approvalTokens.delete(token);
+    }
+    if (approval.signal && approval.abortListener) {
+      approval.signal.removeEventListener("abort", approval.abortListener);
+    }
+
+    try {
+      await this.editMessage(approval.message, `${approval.toolText}\n${suffixText}`);
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { chatId: approval.chatId, messageId: approval.message.messageId, error: err },
+        "Failed to update permission prompt message",
+      );
+    }
+
+    approval.resolve(decision);
+  }
+
+  private async postPermissionMessage(chatId: string, card: CardElement): Promise<OutboundMessageHandle> {
+    const rawMessage = await this.telegram.postMessage(this.toThreadId(chatId), card);
+    return {
+      chatId,
+      messageId: rawMessage.id,
+      threadId: rawMessage.threadId || this.toThreadId(chatId),
+    };
+  }
+
+  private async updatePermissionMessage(
+    message: OutboundMessageHandle,
+    card: CardElement,
+  ): Promise<OutboundMessageHandle> {
+    const threadId = message.threadId || this.toThreadId(message.chatId);
+    try {
+      const result = await this.telegram.editMessage(threadId, message.messageId, card);
+      return {
+        chatId: message.chatId,
+        messageId: result.id,
+        threadId: result.threadId || threadId,
+      };
+    } catch (error) {
+      if (isTelegramMessageNotModifiedError(error)) {
+        this.logger.debug(
+          { chatId: message.chatId, messageId: message.messageId },
+          "Skipping Telegram permission-card edit because the rendered content did not change",
+        );
+        return message;
+      }
+      throw error;
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const logLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
+const toolApprovalModeSchema = z.enum(["auto", "manual"]);
 
 const agentConfigSchema = z.object({
   id: z.string().min(1),
@@ -28,6 +29,11 @@ export const hermesConfigSchema = z
       enabled: z.boolean().default(true),
       tokenEnv: z.string().min(1).default("TELEGRAM_BOT_TOKEN"),
     }),
+    tools: z
+      .object({
+        approvalMode: toolApprovalModeSchema.default("auto"),
+      })
+      .default({ approvalMode: "auto" }),
     agents: z.array(agentConfigSchema).min(1, "At least one agent must be configured."),
   })
   .superRefine((config, ctx) => {
@@ -47,6 +53,7 @@ export const hermesConfigSchema = z
 export type HermesConfig = z.infer<typeof hermesConfigSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
+export type ToolApprovalMode = z.infer<typeof toolApprovalModeSchema>;
 
 export interface LoadedAgentConfig extends AgentConfig {
   cwd: string;
@@ -60,6 +67,7 @@ export interface LoadedHermesConfig {
     tokenEnv: string;
     token: string;
   };
+  tools: HermesConfig["tools"];
   agents: LoadedAgentConfig[];
   defaultAgentId: string;
   configPath: string;

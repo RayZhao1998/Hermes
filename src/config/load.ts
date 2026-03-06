@@ -36,6 +36,7 @@ export async function loadConfig(configPath = path.resolve(process.cwd(), "herme
       tokenEnv: parsed.telegram.tokenEnv,
       token,
     },
+    tools: parsed.tools,
     agents,
     defaultAgentId: pickDefaultAgentId(agents),
     configPath,

@@ -11,7 +11,7 @@ Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegr
 - Chat-scoped Telegram slash commands merged with ACP `available_commands_update`.
 - One persistent process per configured agent.
 - Manual session creation via `/new` only.
-- Auto-approval for `session/request_permission`.
+- Configurable tool approval for `session/request_permission`.
 - Whitelist-based access control (`allowedChatIds` or `allowedUserIds`).
 - In-memory chat state (no persistence).
 
@@ -37,6 +37,7 @@ export TELEGRAM_BOT_TOKEN="<your-token>"
 
 - `security.allowedChatIds`: e.g. `telegram:123456789`
 - `security.allowedUserIds`: e.g. `telegram:987654321`
+- `tools.approvalMode`: `auto` or `manual` (`manual` uses Telegram action buttons for approval)
 - `agents`: command/args/cwd/env for ACP agents
 
 4. Start Hermes:

@@ -1,13 +1,22 @@
 import path from "node:path";
-import pino from "pino";
+import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ToolApprovalMode } from "../../src/config/schema.js";
 import { AgentProcessManager } from "../../src/core/acp/AgentProcessManager.js";
 import type { ChannelAdapter, OutboundMessageHandle } from "../../src/core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js";
+import type { ToolPermissionDecision, ToolPermissionRequest } from "../../src/core/channel/PermissionRequest.js";
 import { ChatOrchestrator } from "../../src/core/orchestrator/ChatOrchestrator.js";
 import { CommandRouter } from "../../src/core/router/CommandRouter.js";
 import { InMemoryChatStateStore } from "../../src/core/state/InMemoryChatStateStore.js";
 import type { ChatCommandDefinition } from "../../src/core/router/CommandRouter.js";
+
+interface PendingPermissionRequest {
+  chatId: string;
+  request: ToolPermissionRequest;
+  resolve: (decision: ToolPermissionDecision) => void;
+  settled: boolean;
+}
 
 class MockChannelAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
@@ -16,6 +25,7 @@ class MockChannelAdapter implements ChannelAdapter {
   edits: Array<{ chatId: string; text: string; messageId: string }> = [];
   syncedCommands: Array<{ chatId: string; commands: readonly ChatCommandDefinition[] }> = [];
   typingSignals: string[] = [];
+  pendingPermissionRequests: PendingPermissionRequest[] = [];
   private nextMessageId = 1;
   private handler?: (msg: MessageEnvelope) => Promise<void>;
 
@@ -61,6 +71,36 @@ class MockChannelAdapter implements ChannelAdapter {
     this.syncedCommands.push({ chatId, commands });
   }
 
+  async requestPermission(
+    chatId: string,
+    request: ToolPermissionRequest,
+    signal?: AbortSignal,
+  ): Promise<ToolPermissionDecision> {
+    return await new Promise<ToolPermissionDecision>((resolve) => {
+      const pending: PendingPermissionRequest = {
+        chatId,
+        request,
+        resolve: (decision) => {
+          if (pending.settled) {
+            return;
+          }
+          pending.settled = true;
+          this.pendingPermissionRequests = this.pendingPermissionRequests.filter((entry) => entry !== pending);
+          resolve(decision);
+        },
+        settled: false,
+      };
+
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          pending.resolve({ outcome: "cancelled" });
+        }, { once: true });
+      }
+
+      this.pendingPermissionRequests.push(pending);
+    });
+  }
+
   async emit(text: string, overrides?: Partial<MessageEnvelope>): Promise<void> {
     if (!this.handler) {
       throw new Error("No handler registered");
@@ -82,6 +122,14 @@ class MockChannelAdapter implements ChannelAdapter {
     this.messages.length = 0;
     this.edits.length = 0;
   }
+
+  resolveNextPermission(decision: ToolPermissionDecision): void {
+    const pending = this.pendingPermissionRequests[0];
+    if (!pending) {
+      throw new Error("No pending permission request");
+    }
+    pending.resolve(decision);
+  }
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 8000): Promise<void> {
@@ -98,9 +146,28 @@ describe("ChatOrchestrator + ACP integration", () => {
   let adapter: MockChannelAdapter;
   let manager: AgentProcessManager;
   let orchestrator: ChatOrchestrator;
+  let logger: Logger;
+
+  async function startOrchestrator(toolApprovalMode: ToolApprovalMode = "auto"): Promise<ChatOrchestrator> {
+    const instance = new ChatOrchestrator({
+      channel: adapter,
+      stateStore: new InMemoryChatStateStore(),
+      router: new CommandRouter(),
+      agentManager: manager,
+      accessControl: {
+        allowedChatIds: ["telegram:1001"],
+        allowedUserIds: [],
+      },
+      toolApprovalMode,
+      logger,
+    });
+
+    await instance.start();
+    return instance;
+  }
 
   beforeEach(async () => {
-    const logger = pino({ enabled: false });
+    logger = pino({ enabled: false });
     const tsxCli = path.resolve(process.cwd(), "node_modules/tsx/dist/cli.mjs");
     const fakeAgent = path.resolve(process.cwd(), "tools/fake-acp-agent.ts");
 
@@ -120,20 +187,7 @@ describe("ChatOrchestrator + ACP integration", () => {
     );
 
     adapter = new MockChannelAdapter();
-
-    orchestrator = new ChatOrchestrator({
-      channel: adapter,
-      stateStore: new InMemoryChatStateStore(),
-      router: new CommandRouter(),
-      agentManager: manager,
-      accessControl: {
-        allowedChatIds: ["telegram:1001"],
-        allowedUserIds: [],
-      },
-      logger,
-    });
-
-    await orchestrator.start();
+    orchestrator = await startOrchestrator();
   });
 
   afterEach(async () => {
@@ -158,14 +212,61 @@ describe("ChatOrchestrator + ACP integration", () => {
     const merged = adapter.messages.map((m) => m.text).join("\n");
     expect(merged).toContain("Echo: hello hermes");
     expect(merged).toContain("permission:allow");
+    expect(merged).toContain("Write permission granted via: allow");
     expect(merged).toContain("Search complete for: hello hermes");
     expect(merged).toContain("\"result\":\"ok\"");
     expect(merged).not.toContain("Turn complete.");
     expect(adapter.messages.length).toBeGreaterThanOrEqual(2);
     expect(adapter.edits.length).toBeGreaterThanOrEqual(2);
-    expect(adapter.messages.filter((m) => m.text.includes("[tool]")).length).toBe(1);
+    expect(adapter.messages.filter((m) => m.text.includes("[tool] Fake write operation")).length).toBe(1);
+    expect(adapter.messages.filter((m) => m.text.includes("[tool] Fake search operation")).length).toBe(1);
     expect(merged).not.toContain("[tool] Fake search operation (pending)");
     expect(merged).not.toContain("[tool] Fake search operation (in_progress)");
+  });
+
+  it("waits for manual permission approval before allowing the tool call", async () => {
+    await orchestrator.stop();
+    orchestrator = await startOrchestrator("manual");
+
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    void adapter.emit("hello hermes");
+
+    await waitFor(() => adapter.pendingPermissionRequests.length === 1);
+    const pendingRequest = adapter.pendingPermissionRequests[0];
+    expect(pendingRequest?.request.title).toBe("Fake write operation");
+    expect(pendingRequest?.request.renderedText).toContain("[tool] Fake write operation (pending)");
+    expect(pendingRequest?.request.message?.messageId).toBe(
+      adapter.messages.find((entry) => entry.text.includes("[tool] Fake write operation (pending)"))?.messageId,
+    );
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).not.toContain("permission:allow");
+
+    adapter.resolveNextPermission({ outcome: "selected", optionId: "allow" });
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const merged = adapter.messages.map((m) => m.text).join("\n");
+    expect(merged).toContain("permission:allow");
+    expect(merged).toContain("Write permission granted via: allow");
+    expect(merged).toContain("Search complete for: hello hermes");
+  });
+
+  it("cancels a pending manual permission request when /cancel is issued", async () => {
+    await orchestrator.stop();
+    orchestrator = await startOrchestrator("manual");
+
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    void adapter.emit("hello hermes");
+    await waitFor(() => adapter.pendingPermissionRequests.length === 1);
+
+    await adapter.emit("/cancel");
+
+    await waitFor(() => adapter.pendingPermissionRequests.length === 0);
+    expect(adapter.messages.some((m) => m.text.includes("Cancellation requested"))).toBe(true);
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).not.toContain("permission:allow");
   });
 
   it("syncs ACP slash commands after session creation", async () => {
@@ -241,7 +342,7 @@ describe("ChatOrchestrator + ACP integration", () => {
 
     await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
 
-    const toolMessages = adapter.messages.filter((m) => m.text.includes("[tool]"));
+    const toolMessages = adapter.messages.filter((m) => m.text.includes("[tool] Fake search operation"));
     expect(toolMessages).toHaveLength(1);
     expect(toolMessages[0]?.text).toContain("Search complete for: hello tool flow");
     expect(adapter.edits.map((entry) => entry.text)).toEqual(
@@ -250,6 +351,19 @@ describe("ChatOrchestrator + ACP integration", () => {
         expect.stringContaining("[tool] Fake search operation (completed)"),
       ]),
     );
+  });
+
+  it("ignores tool_call_update events that do not change visible content", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("please trigger noop tool update");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const searchToolMessages = adapter.messages.filter((m) => m.text.includes("[tool] Fake search operation"));
+    expect(searchToolMessages).toHaveLength(1);
+    expect(searchToolMessages[0]?.text).toContain("Search complete for: please trigger noop tool update");
   });
 
   it("does not render fallback toolCallId text when an update arrives without a visible title", async () => {

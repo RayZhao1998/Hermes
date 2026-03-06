@@ -18,7 +18,7 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    default: true\n`,
+      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    default: true\n`,
       "utf8",
     );
 
@@ -28,6 +28,7 @@ describe("config loading", () => {
     expect(loaded.defaultAgentId).toBe("a");
     expect(path.isAbsolute(loaded.agents[0].cwd)).toBe(true);
     expect(loaded.telegram.token).toBe("abc");
+    expect(loaded.tools.approvalMode).toBe("manual");
   });
 
   it("throws when telegram token env is missing", async () => {
@@ -53,5 +54,16 @@ describe("config loading", () => {
         ],
       }),
     ).toThrow("Duplicate agent id");
+  });
+
+  it("defaults tool approval mode to auto", () => {
+    const parsed = hermesConfigSchema.parse({
+      telegram: { enabled: true, tokenEnv: "TG" },
+      agents: [
+        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+      ],
+    });
+
+    expect(parsed.tools.approvalMode).toBe("auto");
   });
 });

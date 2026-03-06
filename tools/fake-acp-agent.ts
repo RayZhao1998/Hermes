@@ -98,6 +98,16 @@ class FakeAgent implements Agent {
       await sleep(80);
     }
 
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "fake-tool-1",
+        title: "Fake write operation",
+        status: "pending",
+      },
+    });
+
     const permission = await this.connection.requestPermission({
       sessionId: params.sessionId,
       toolCall: {
@@ -123,6 +133,24 @@ class FakeAgent implements Agent {
           type: "text",
           text: ` [permission:${permission.outcome.optionId}]`,
         },
+      },
+    });
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fake-tool-1",
+        status: "completed",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: `Write permission granted via: ${permission.outcome.optionId}`,
+            },
+          },
+        ],
       },
     });
 
@@ -174,6 +202,16 @@ class FakeAgent implements Agent {
         ],
       },
     });
+
+    if (text.toLowerCase().includes("noop tool update")) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "fake-tool-2",
+        },
+      });
+    }
 
     const isLong = text.toLowerCase().includes("long");
     const hasLateCompletion = text.toLowerCase().includes("late tool");
