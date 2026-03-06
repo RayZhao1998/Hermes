@@ -296,10 +296,23 @@ describe("ChatOrchestrator + ACP integration", () => {
         { name: "new", description: "Create a new ACP session" },
         { name: "status", description: "Show current chat state" },
         { name: "cancel", description: "Cancel the active turn" },
-        { name: "explain", description: "Explain the selected code or text." },
-        { name: "summarize", description: "Summarize the latest context." },
+        { name: "fake:explain", description: "Explain the selected code or text." },
+        { name: "fake:summarize", description: "Summarize the latest context." },
       ],
     });
+  });
+
+  it("rewrites namespaced agent commands before sending them to ACP", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/fake:explain file.ts");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const merged = adapter.messages.map((m) => m.text).join("\n");
+    expect(merged).toContain("Echo: /explain file.ts");
+    expect(merged).toContain("Search complete for: /explain file.ts");
   });
 
   it("shows configured MCP servers in /status", async () => {

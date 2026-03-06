@@ -54,7 +54,8 @@ npm run dev
 - `/new` create a new ACP session
 - `/status` show current agent/session/turn state, including configured MCP servers
 - `/cancel` cancel in-flight prompt turn
-- ACP slash commands published by the active session are registered dynamically for the current Telegram chat and are executed by sending the raw `/<command> ...` prompt to the agent.
+- ACP slash commands published by the active session are namespaced as `/<agent-id>:<command>` to avoid collisions with Hermes commands, and Hermes rewrites them back to the raw `/<command> ...` prompt before sending them to the agent.
+- Telegram command registration uses a `__` alias for namespaced ACP commands when needed (for example, `/codex__logout` maps to `/codex:logout`).
 
 ## Build and Test
 

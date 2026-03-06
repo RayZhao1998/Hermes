@@ -50,7 +50,7 @@ describe("registerTelegramCommands", () => {
       pino({ enabled: false }),
       [
         ...commandDefinitions,
-        { name: "explain", description: "Explain the selected code or text." },
+        { name: "fake:explain", description: "Explain the selected code or text." },
       ],
       { type: "chat", chat_id: "1001" },
     );
@@ -62,7 +62,7 @@ describe("registerTelegramCommands", () => {
           command: name,
           description,
         })),
-        { command: "explain", description: "Explain the selected code or text." },
+        { command: "fake__explain", description: "Explain the selected code or text." },
       ],
       scope: {
         type: "chat",

@@ -25,6 +25,10 @@ import {
   commandDefinitions,
   type ChatCommandDefinition,
 } from "../../core/router/CommandRouter.js";
+import {
+  isTelegramSafeCommandName,
+  toTelegramCommandAlias,
+} from "../../core/router/AgentCommandNamespace.js";
 
 let globalProxyConfigured = false;
 const PERMISSION_ACTION_ID = "hermes_permission";
@@ -499,18 +503,22 @@ function toTelegramCommandDefinitions(
   const normalized: Array<{ command: string; description: string }> = [];
 
   for (const command of commands) {
-    if (!/^[a-z0-9_]{1,32}$/u.test(command.name)) {
+    const telegramCommandName = isTelegramSafeCommandName(command.name)
+      ? command.name
+      : toTelegramCommandAlias(command.name);
+
+    if (!isTelegramSafeCommandName(telegramCommandName)) {
       logger.warn({ command: command.name }, "Skipping Telegram command with unsupported name");
       continue;
     }
 
-    if (seen.has(command.name)) {
+    if (seen.has(telegramCommandName)) {
       continue;
     }
 
-    seen.add(command.name);
+    seen.add(telegramCommandName);
     normalized.push({
-      command: command.name,
+      command: telegramCommandName,
       description: command.description.slice(0, 256),
     });
   }

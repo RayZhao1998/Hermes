@@ -8,6 +8,10 @@ import {
   mergeCommandDefinitions,
   type ParsedCommand,
 } from "../router/CommandRouter.js";
+import {
+  rewriteAgentCommandPrompt,
+  toAgentChatCommandDefinition,
+} from "../router/AgentCommandNamespace.js";
 import { InMemoryChatStateStore } from "../state/InMemoryChatStateStore.js";
 import type { AccessControlConfig } from "../security/isAuthorized.js";
 import { isAuthorizedMessage } from "../security/isAuthorized.js";
@@ -304,7 +308,17 @@ export class ChatOrchestrator {
       return;
     }
 
-    await this.handlePrompt(chatKey, message, state.activeAgentId, state.sessionId, state.activeTurnId);
+    const promptText = rewriteAgentCommandPrompt(message.text, state.activeAgentId, state.availableCommands) ?? message.text;
+    await this.handlePrompt(
+      chatKey,
+      {
+        ...message,
+        text: promptText,
+      },
+      state.activeAgentId,
+      state.sessionId,
+      state.activeTurnId,
+    );
   }
 
   private async handleCommand(chatKey: string, message: MessageEnvelope, command: ParsedCommand): Promise<void> {
@@ -369,7 +383,11 @@ export class ChatOrchestrator {
             `Session: ${state.sessionId ?? "(none)"}`,
             `Turn: ${state.activeTurnId ?? "idle"}`,
             `MCP servers: ${formatMcpServers(mcpServers)}`,
-            `Commands: ${state.availableCommands.length === 0 ? "(none)" : state.availableCommands.map(({ name }) => `/${name}`).join(", ")}`,
+            `Commands: ${state.availableCommands.length === 0
+              ? "(none)"
+              : state.availableCommands
+                  .map((command) => `/${toAgentChatCommandDefinition(state.activeAgentId, command).name}`)
+                  .join(", ")}`,
           ].join("\n"),
         );
         return;
@@ -676,16 +694,13 @@ export class ChatOrchestrator {
     await this.channel.syncCommands(
       chatId,
       mergeCommandDefinitions(
-        state.availableCommands.map((command) => this.toChatCommandDefinition(command)),
+        state.availableCommands.map((command) => this.toChatCommandDefinition(state.activeAgentId, command)),
       ),
     );
   }
 
-  private toChatCommandDefinition(command: AvailableCommand): { name: string; description: string } {
-    return {
-      name: command.name,
-      description: command.description,
-    };
+  private toChatCommandDefinition(agentId: string, command: AvailableCommand): { name: string; description: string } {
+    return toAgentChatCommandDefinition(agentId, command);
   }
 
   private async setTypingIfSupported(chatId: string): Promise<void> {
