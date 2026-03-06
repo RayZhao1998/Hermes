@@ -5,8 +5,12 @@ describe("CommandRouter", () => {
   const router = new CommandRouter();
 
   it("parses standard commands", () => {
-    expect(router.parse("/session")).toEqual({ name: "session", args: [] });
+    expect(router.parse("/new")).toEqual({ name: "new", args: [] });
     expect(router.parse("/agent codex")).toEqual({ name: "agent", args: ["codex"] });
+  });
+
+  it("maps legacy /session to /new", () => {
+    expect(router.parse("/session")).toEqual({ name: "new", args: [] });
   });
 
   it("handles telegram mention command forms", () => {

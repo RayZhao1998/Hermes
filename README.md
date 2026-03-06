@@ -9,7 +9,7 @@ Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegr
 - ACP transport over `stdio` only.
 - Telegram bot transport via Chat SDK polling.
 - One persistent process per configured agent.
-- Manual session creation via `/session` only.
+- Manual session creation via `/new` only.
 - Auto-approval for `session/request_permission`.
 - Whitelist-based access control (`allowedChatIds` or `allowedUserIds`).
 - In-memory chat state (no persistence).
@@ -48,7 +48,7 @@ npm run dev
 
 - `/agents` list configured agents and runtime status
 - `/agent <id>` switch active agent for current chat (resets session)
-- `/session` create a new ACP session
+- `/new` create a new ACP session
 - `/status` show current agent/session/turn state
 - `/cancel` cancel in-flight prompt turn
 

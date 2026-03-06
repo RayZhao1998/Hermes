@@ -8,6 +8,7 @@ import type { Logger } from "pino";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import type { ChannelAdapter } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
+import { commandDefinitions } from "../../core/router/CommandRouter.js";
 
 let globalProxyConfigured = false;
 
@@ -84,11 +85,13 @@ class PinoChatSdkLogger implements ChatSdkLogger {
 export class TelegramAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
 
+  private readonly token: string;
   private readonly telegram: ChatSdkTelegramAdapter;
   private readonly bot: Chat;
   private onMessageHandler?: (msg: MessageEnvelope) => Promise<void>;
 
   constructor(token: string, private readonly logger: Logger) {
+    this.token = token;
     configureGlobalFetchProxy(logger);
 
     const chatLogger = new PinoChatSdkLogger(logger);
@@ -150,6 +153,12 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     await this.bot.initialize();
+    try {
+      await registerTelegramCommands(this.token, this.logger);
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ error: err }, "Telegram bot commands registration failed");
+    }
     this.logger.info(
       { runtimeMode: this.telegram.runtimeMode, username: this.telegram.userName || "unknown" },
       "Telegram adapter started via Chat SDK",
@@ -201,4 +210,34 @@ export class TelegramAdapter implements ChannelAdapter {
   private toThreadId(chatId: string): string {
     return this.telegram.encodeThreadId({ chatId });
   }
+}
+
+interface TelegramApiResponse {
+  ok?: boolean;
+  description?: string;
+}
+
+export async function registerTelegramCommands(token: string, logger: Logger): Promise<void> {
+  const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      commands: commandDefinitions.map(({ name, description }) => ({
+        command: name,
+        description,
+      })),
+    }),
+  });
+
+  const payload = (await response.json()) as TelegramApiResponse;
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.description ?? `HTTP ${response.status}`);
+  }
+
+  logger.info(
+    { commands: commandDefinitions.map(({ name }) => name) },
+    "Telegram bot commands registered",
+  );
 }

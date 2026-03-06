@@ -1,11 +1,20 @@
-export type CommandName = "agents" | "agent" | "session" | "status" | "cancel";
+export const commandDefinitions = [
+  { name: "agents", description: "List configured agents" },
+  { name: "agent", description: "Switch the active agent" },
+  { name: "new", description: "Create a new ACP session" },
+  { name: "status", description: "Show current chat state" },
+  { name: "cancel", description: "Cancel the active turn" },
+] as const;
+
+export type CommandName = (typeof commandDefinitions)[number]["name"];
 
 export interface ParsedCommand {
   name: CommandName;
   args: string[];
 }
 
-const supportedCommands: ReadonlySet<string> = new Set(["agents", "agent", "session", "status", "cancel"]);
+const supportedCommands: ReadonlySet<string> = new Set(commandDefinitions.map(({ name }) => name));
+const aliases = new Map<string, CommandName>([["session", "new"]]);
 
 export class CommandRouter {
   parse(input: string): ParsedCommand | null {
@@ -20,12 +29,13 @@ export class CommandRouter {
     }
 
     const commandToken = parts[0].split("@")[0].toLowerCase();
-    if (!supportedCommands.has(commandToken)) {
+    const canonicalCommand = aliases.get(commandToken) ?? commandToken;
+    if (!supportedCommands.has(canonicalCommand)) {
       return null;
     }
 
     return {
-      name: commandToken as CommandName,
+      name: canonicalCommand as CommandName,
       args: parts.slice(1),
     };
   }

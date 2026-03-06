@@ -9,7 +9,7 @@ import { AgentProcessManager } from "../acp/AgentProcessManager.js";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 
 const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Hermes.";
-const NO_SESSION_TEXT = "No active session. Run /session first.";
+const NO_SESSION_TEXT = "No active session. Run /new first.";
 const BUSY_TEXT = "A turn is already in progress. Use /cancel to interrupt it.";
 const TYPING_REFRESH_MS = 4000;
 
@@ -221,7 +221,7 @@ export class ChatOrchestrator {
       case "agents": {
         const rows = this.agentManager.listAgents().map((agent) => {
           const marker = agent.id === state.activeAgentId ? "*" : " ";
-          return `${marker} ${agent.id} - ${agent.status}`;
+          return `${marker} ${agent.id}`;
         });
         await this.channel.sendMessage(message.chatId, `Available agents:\n${rows.join("\n")}`);
         return;
@@ -242,10 +242,10 @@ export class ChatOrchestrator {
         }
 
         this.stateStore.setActiveAgent(chatKey, agentId);
-        await this.channel.sendMessage(message.chatId, `Active agent switched to '${agentId}'. Session reset; run /session.`);
+        await this.channel.sendMessage(message.chatId, `Active agent switched to '${agentId}'. Session reset; run /new.`);
         return;
       }
-      case "session": {
+      case "new": {
         if (state.activeTurnId) {
           await this.channel.sendMessage(message.chatId, BUSY_TEXT);
           return;

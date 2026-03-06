@@ -117,11 +117,11 @@ describe("ChatOrchestrator + ACP integration", () => {
   it("rejects prompt when /session was not created", async () => {
     await adapter.emit("hello");
 
-    expect(adapter.messages.at(-1)?.text).toContain("Run /session first");
+    expect(adapter.messages.at(-1)?.text).toContain("Run /new first");
   });
 
   it("runs initialize -> session/new -> session/prompt and auto-approves permission", async () => {
-    await adapter.emit("/session");
+    await adapter.emit("/new");
     expect(adapter.messages.at(-1)?.text).toContain("Session created");
     adapter.clearMessages();
 
@@ -136,7 +136,7 @@ describe("ChatOrchestrator + ACP integration", () => {
   });
 
   it("cancels active turn via /cancel", async () => {
-    await adapter.emit("/session");
+    await adapter.emit("/new");
     adapter.clearMessages();
 
     void adapter.emit("please run a long task");
@@ -149,7 +149,7 @@ describe("ChatOrchestrator + ACP integration", () => {
   });
 
   it("emits typing signal while session updates are streaming", async () => {
-    await adapter.emit("/session");
+    await adapter.emit("/new");
     adapter.clearMessages();
     adapter.typingSignals.length = 0;
 
