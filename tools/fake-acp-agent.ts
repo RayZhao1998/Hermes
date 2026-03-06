@@ -126,7 +126,57 @@ class FakeAgent implements Agent {
       },
     });
 
+    if (text.toLowerCase().includes("untitled tool")) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call_c1f39807384f4f21954d7ffc",
+          status: "in_progress",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "Title-less tool call update",
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "fake-tool-2",
+        title: "Fake search operation",
+        status: "pending",
+      },
+    });
+    await sleep(40);
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fake-tool-2",
+        status: "in_progress",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: `Searching for: ${text}`,
+            },
+          },
+        ],
+      },
+    });
+
     const isLong = text.toLowerCase().includes("long");
+    const hasLateCompletion = text.toLowerCase().includes("late tool");
     const iterations = isLong ? 30 : 4;
 
     for (let i = 0; i < iterations; i += 1) {
@@ -145,6 +195,41 @@ class FakeAgent implements Agent {
       });
       await sleep(120);
     }
+
+    const completedUpdate = {
+      sessionUpdate: "tool_call_update" as const,
+      toolCallId: "fake-tool-2",
+      status: "completed" as const,
+      content: [
+        {
+          type: "content" as const,
+          content: {
+            type: "text" as const,
+            text: `Search complete for: ${text}`,
+          },
+        },
+      ],
+      rawOutput: {
+        result: "ok",
+        promptLength: text.length,
+      },
+    };
+
+    if (hasLateCompletion) {
+      void (async () => {
+        await sleep(10);
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: completedUpdate,
+        });
+      })();
+      return { stopReason: "end_turn" };
+    }
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: completedUpdate,
+    });
 
     return { stopReason: "end_turn" };
   }

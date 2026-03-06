@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import type { AvailableCommand, SessionUpdate } from "@agentclientprotocol/sdk";
-import type { ChannelAdapter } from "../channel/ChannelAdapter.js";
+import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
 import {
   CommandRouter,
@@ -17,6 +17,7 @@ const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Her
 const NO_SESSION_TEXT = "No active session. Run /new first.";
 const BUSY_TEXT = "A turn is already in progress. Use /cancel to interrupt it.";
 const TYPING_REFRESH_MS = 4000;
+const PROMPT_TURN_SETTLE_MS = 50;
 
 type RenderEvent =
   | {
@@ -26,12 +27,34 @@ type RenderEvent =
   | {
       kind: "message";
       text: string;
+    }
+  | {
+      kind: "tool_call";
+      toolCallId: string;
+      title?: string;
+      status?: string;
+      titleProvided: boolean;
+      statusProvided: boolean;
+      contentProvided: boolean;
+      contentMessages: string[];
+      rawOutputProvided: boolean;
+      rawOutput?: string;
     };
+
+interface ToolCallRenderState {
+  toolCallId: string;
+  title?: string;
+  status?: string;
+  contentMessages: string[];
+  rawOutput?: string;
+  message?: OutboundMessageHandle;
+}
 
 interface ActiveTurnState {
   turnId: string;
   emittedContent: boolean;
   chunkBuffer: string;
+  toolCalls: Map<string, ToolCallRenderState>;
 }
 
 interface SessionBinding {
@@ -39,6 +62,7 @@ interface SessionBinding {
   agentId: string;
   sessionId: string;
   unsubscribe: () => void;
+  pendingSessionUpdates: Promise<void>;
   activeTurn?: ActiveTurnState;
 }
 
@@ -143,33 +167,58 @@ function renderEventsFromUpdate(update: SessionUpdate): RenderEvent[] {
   }
 
   if (loose.sessionUpdate === "tool_call") {
-    if (typeof loose.title === "string") {
-      const suffix = typeof loose.status === "string" ? ` (${loose.status})` : "";
-      events.push({ kind: "message", text: `[tool] ${loose.title}${suffix}` });
-    }
-    for (const message of extractToolContentMessages(loose.content)) {
-      events.push({ kind: "message", text: truncateForChat(message) });
-    }
+    events.push({
+      kind: "tool_call",
+      toolCallId: typeof loose.toolCallId === "string" ? loose.toolCallId : "unknown",
+      title: typeof loose.title === "string" ? loose.title : undefined,
+      status: typeof loose.status === "string" ? loose.status : undefined,
+      titleProvided: "title" in loose,
+      statusProvided: "status" in loose,
+      contentProvided: "content" in loose,
+      contentMessages: extractToolContentMessages(loose.content).map((message) => truncateForChat(message)),
+      rawOutputProvided: "rawOutput" in loose,
+      rawOutput: undefined,
+    });
     return events;
   }
 
   if (loose.sessionUpdate === "tool_call_update") {
-    if (typeof loose.title === "string" || typeof loose.status === "string") {
-      const name = typeof loose.title === "string" ? loose.title : `tool:${String(loose.toolCallId ?? "unknown")}`;
-      const suffix = typeof loose.status === "string" ? ` (${loose.status})` : "";
-      events.push({ kind: "message", text: `[tool] ${name}${suffix}` });
-    }
-    for (const message of extractToolContentMessages(loose.content)) {
-      events.push({ kind: "message", text: truncateForChat(message) });
-    }
     const raw = toCompactText(loose.rawOutput);
-    if (raw && raw.length > 0) {
-      events.push({ kind: "message", text: truncateForChat(raw, 1200) });
-    }
+    events.push({
+      kind: "tool_call",
+      toolCallId: typeof loose.toolCallId === "string" ? loose.toolCallId : "unknown",
+      title: typeof loose.title === "string" ? loose.title : undefined,
+      status: typeof loose.status === "string" ? loose.status : undefined,
+      titleProvided: "title" in loose,
+      statusProvided: "status" in loose,
+      contentProvided: "content" in loose,
+      contentMessages: extractToolContentMessages(loose.content).map((message) => truncateForChat(message)),
+      rawOutputProvided: "rawOutput" in loose,
+      rawOutput: raw && raw.length > 0 ? truncateForChat(raw, 1200) : undefined,
+    });
     return events;
   }
 
   return events;
+}
+
+function renderToolCallText(toolCall: ToolCallRenderState): string {
+  if (!toolCall.title) {
+    return "";
+  }
+
+  const header = `[tool] ${toolCall.title}${toolCall.status ? ` (${toolCall.status})` : ""}`;
+  const sections = [header];
+
+  if (toolCall.contentMessages.length > 0) {
+    sections.push(toolCall.contentMessages.join("\n"));
+  }
+
+  if (toolCall.rawOutput) {
+    sections.push(toolCall.rawOutput);
+  }
+
+  return sections.join("\n");
 }
 
 export interface ChatOrchestratorOptions {
@@ -344,6 +393,7 @@ export class ChatOrchestrator {
       turnId,
       emittedContent: false,
       chunkBuffer: "",
+      toolCalls: new Map(),
     };
 
     const client = await this.agentManager.getClient(activeAgentId);
@@ -351,6 +401,7 @@ export class ChatOrchestrator {
     try {
       await this.setTypingIfSupported(message.chatId);
       await client.prompt(sessionId, message.text);
+      await this.waitForPendingSessionUpdates(sessionBinding);
       await this.flushChunkBuffer(sessionBinding);
       if (!sessionBinding.activeTurn?.emittedContent) {
         await this.channel.sendMessage(
@@ -393,10 +444,17 @@ export class ChatOrchestrator {
       agentId,
       sessionId,
       unsubscribe: () => undefined,
+      pendingSessionUpdates: Promise.resolve(),
     };
 
     binding.unsubscribe = client.onSessionUpdate(sessionId, async (update) => {
-      await this.handleSessionUpdate(chatKey, binding, update);
+      binding.pendingSessionUpdates = binding.pendingSessionUpdates
+        .catch(() => undefined)
+        .then(async () => {
+          await this.handleSessionUpdate(chatKey, binding, update);
+        });
+
+      await binding.pendingSessionUpdates;
     });
 
     this.sessionBindings.set(chatKey, binding);
@@ -431,6 +489,12 @@ export class ChatOrchestrator {
         binding.activeTurn.chunkBuffer += event.text;
         continue;
       }
+      if (event.kind === "tool_call") {
+        binding.activeTurn.emittedContent = true;
+        await this.flushChunkBuffer(binding);
+        await this.upsertToolCallMessage(binding, event);
+        continue;
+      }
       binding.activeTurn.emittedContent = true;
       await this.flushChunkBuffer(binding);
       await this.channel.sendMessage(binding.chatId, event.text);
@@ -446,6 +510,59 @@ export class ChatOrchestrator {
     const payload = binding.activeTurn.chunkBuffer;
     binding.activeTurn.chunkBuffer = "";
     await sendChunkedMessage(this.channel, binding.chatId, payload);
+  }
+
+  private async upsertToolCallMessage(
+    binding: SessionBinding,
+    event: Extract<RenderEvent, { kind: "tool_call" }>,
+  ): Promise<void> {
+    if (!binding.activeTurn) {
+      return;
+    }
+
+    const existing = binding.activeTurn.toolCalls.get(event.toolCallId);
+    const toolCall: ToolCallRenderState = existing ?? {
+      toolCallId: event.toolCallId,
+      title: undefined,
+      status: undefined,
+      contentMessages: [],
+      rawOutput: undefined,
+      message: undefined,
+    };
+
+    if (event.titleProvided && typeof event.title === "string" && event.title.trim().length > 0) {
+      toolCall.title = event.title;
+    }
+    if (event.statusProvided) {
+      toolCall.status = event.status;
+    }
+    if (event.contentProvided) {
+      toolCall.contentMessages = event.contentMessages;
+    }
+    if (event.rawOutputProvided) {
+      toolCall.rawOutput = event.rawOutput;
+    }
+
+    const rendered = renderToolCallText(toolCall);
+    binding.activeTurn.toolCalls.set(event.toolCallId, toolCall);
+
+    if (!rendered) {
+      return;
+    }
+
+    if (toolCall.message && this.channel.editMessage) {
+      toolCall.message = await this.channel.editMessage(toolCall.message, rendered);
+    } else {
+      toolCall.message = await this.channel.sendMessage(binding.chatId, rendered);
+    }
+
+    binding.activeTurn.toolCalls.set(event.toolCallId, toolCall);
+  }
+
+  private async waitForPendingSessionUpdates(binding: SessionBinding): Promise<void> {
+    await binding.pendingSessionUpdates.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, PROMPT_TURN_SETTLE_MS));
+    await binding.pendingSessionUpdates.catch(() => undefined);
   }
 
   private async syncCommands(chatKey: string, chatId: string): Promise<void> {

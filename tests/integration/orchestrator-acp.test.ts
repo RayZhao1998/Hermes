@@ -2,7 +2,7 @@ import path from "node:path";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentProcessManager } from "../../src/core/acp/AgentProcessManager.js";
-import type { ChannelAdapter } from "../../src/core/channel/ChannelAdapter.js";
+import type { ChannelAdapter, OutboundMessageHandle } from "../../src/core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js";
 import { ChatOrchestrator } from "../../src/core/orchestrator/ChatOrchestrator.js";
 import { CommandRouter } from "../../src/core/router/CommandRouter.js";
@@ -12,9 +12,11 @@ import type { ChatCommandDefinition } from "../../src/core/router/CommandRouter.
 class MockChannelAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
 
-  messages: Array<{ chatId: string; text: string }> = [];
+  messages: Array<{ chatId: string; text: string; messageId: string }> = [];
+  edits: Array<{ chatId: string; text: string; messageId: string }> = [];
   syncedCommands: Array<{ chatId: string; commands: readonly ChatCommandDefinition[] }> = [];
   typingSignals: string[] = [];
+  private nextMessageId = 1;
   private handler?: (msg: MessageEnvelope) => Promise<void>;
 
   onMessage(handler: (msg: MessageEnvelope) => Promise<void>): void {
@@ -29,8 +31,26 @@ class MockChannelAdapter implements ChannelAdapter {
     // no-op
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
-    this.messages.push({ chatId, text });
+  async sendMessage(chatId: string, text: string): Promise<OutboundMessageHandle> {
+    const messageId = String(this.nextMessageId);
+    this.nextMessageId += 1;
+    this.messages.push({ chatId, text, messageId });
+    return {
+      chatId,
+      messageId,
+      threadId: `telegram:${chatId}`,
+    };
+  }
+
+  async editMessage(message: OutboundMessageHandle, text: string): Promise<OutboundMessageHandle> {
+    const existing = this.messages.find((entry) => entry.messageId === message.messageId);
+    if (!existing) {
+      throw new Error(`Message not found: ${message.messageId}`);
+    }
+
+    existing.text = text;
+    this.edits.push({ chatId: message.chatId, text, messageId: message.messageId });
+    return message;
   }
 
   async setTyping(chatId: string): Promise<void> {
@@ -60,6 +80,7 @@ class MockChannelAdapter implements ChannelAdapter {
 
   clearMessages(): void {
     this.messages.length = 0;
+    this.edits.length = 0;
   }
 }
 
@@ -133,12 +154,18 @@ describe("ChatOrchestrator + ACP integration", () => {
 
     await adapter.emit("hello hermes");
 
-    await waitFor(() => adapter.messages.length > 0);
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
     const merged = adapter.messages.map((m) => m.text).join("\n");
     expect(merged).toContain("Echo: hello hermes");
     expect(merged).toContain("permission:allow");
+    expect(merged).toContain("Search complete for: hello hermes");
+    expect(merged).toContain("\"result\":\"ok\"");
     expect(merged).not.toContain("Turn complete.");
-    expect(adapter.messages.length).toBe(1);
+    expect(adapter.messages.length).toBeGreaterThanOrEqual(2);
+    expect(adapter.edits.length).toBeGreaterThanOrEqual(2);
+    expect(adapter.messages.filter((m) => m.text.includes("[tool]")).length).toBe(1);
+    expect(merged).not.toContain("[tool] Fake search operation (pending)");
+    expect(merged).not.toContain("[tool] Fake search operation (in_progress)");
   });
 
   it("syncs ACP slash commands after session creation", async () => {
@@ -200,9 +227,54 @@ describe("ChatOrchestrator + ACP integration", () => {
     adapter.typingSignals.length = 0;
 
     await adapter.emit("hello typing");
-    await waitFor(() => adapter.messages.length > 0);
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
 
     expect(adapter.typingSignals.length).toBeGreaterThan(0);
     expect(adapter.typingSignals.every((chatId) => chatId === "1001")).toBe(true);
+  });
+
+  it("edits tool-call updates in place instead of sending a new message per status change", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("hello tool flow");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const toolMessages = adapter.messages.filter((m) => m.text.includes("[tool]"));
+    expect(toolMessages).toHaveLength(1);
+    expect(toolMessages[0]?.text).toContain("Search complete for: hello tool flow");
+    expect(adapter.edits.map((entry) => entry.text)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("[tool] Fake search operation (in_progress)"),
+        expect.stringContaining("[tool] Fake search operation (completed)"),
+      ]),
+    );
+  });
+
+  it("does not render fallback toolCallId text when an update arrives without a visible title", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("please trigger untitled tool");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("Echo: please trigger untitled tool")));
+
+    const merged = adapter.messages.map((m) => m.text).join("\n");
+    expect(merged).not.toContain("[tool] tool:call_c1f39807384f4f21954d7ffc");
+    expect(merged).not.toContain("call_c1f39807384f4f21954d7ffc");
+  });
+
+  it("waits briefly for late tool-call completion updates before finalizing the turn", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("please run late tool");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const toolMessage = adapter.messages.find((m) => m.text.includes("[tool] Fake search operation"));
+    expect(toolMessage?.text).toContain("(completed)");
+    expect(toolMessage?.text).not.toContain("(pending)");
   });
 });

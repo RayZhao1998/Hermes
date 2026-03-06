@@ -6,7 +6,7 @@ import {
 import { Chat, type Logger as ChatSdkLogger, type Message, type Thread } from "chat";
 import type { Logger } from "pino";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
-import type { ChannelAdapter } from "../../core/channel/ChannelAdapter.js";
+import type { ChannelAdapter, OutboundMessageHandle } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
 import {
   commandDefinitions,
@@ -133,13 +133,39 @@ export class TelegramAdapter implements ChannelAdapter {
     this.onMessageHandler = handler;
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
+  async sendMessage(chatId: string, text: string): Promise<OutboundMessageHandle> {
     try {
-      await this.telegram.postMessage(this.toThreadId(chatId), text);
+      const result = await this.telegram.postMessage(this.toThreadId(chatId), text);
       this.logger.info({ chatId, textPreview: text.slice(0, 80) }, "Telegram message sent via Chat SDK");
+      return {
+        chatId,
+        messageId: result.id,
+        threadId: result.threadId || this.toThreadId(chatId),
+      };
     } catch (error) {
       const err = error instanceof Error ? error.message : String(error);
       this.logger.error({ error: err, chatId }, "Telegram sendMessage failed");
+      throw error;
+    }
+  }
+
+  async editMessage(message: OutboundMessageHandle, text: string): Promise<OutboundMessageHandle> {
+    const threadId = message.threadId || this.toThreadId(message.chatId);
+
+    try {
+      const result = await this.telegram.editMessage(threadId, message.messageId, text);
+      this.logger.info(
+        { chatId: message.chatId, messageId: message.messageId, textPreview: text.slice(0, 80) },
+        "Telegram message edited via Chat SDK",
+      );
+      return {
+        chatId: message.chatId,
+        messageId: result.id,
+        threadId: result.threadId || threadId,
+      };
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      this.logger.error({ error: err, chatId: message.chatId, messageId: message.messageId }, "Telegram editMessage failed");
       throw error;
     }
   }

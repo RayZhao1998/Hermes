@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import type { ChannelAdapter } from "../../core/channel/ChannelAdapter.js";
+import type { ChannelAdapter, OutboundMessageHandle } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
 
 // V2 placeholder: keeps channel abstraction stable while Discord is not enabled yet.
@@ -12,7 +12,7 @@ export class DiscordAdapter implements ChannelAdapter {
     // TODO(V2): wire Discord gateway events.
   }
 
-  async sendMessage(_chatId: string, _text: string): Promise<void> {
+  async sendMessage(_chatId: string, _text: string): Promise<OutboundMessageHandle> {
     throw new Error("Discord adapter is not implemented in V1.");
   }
 
