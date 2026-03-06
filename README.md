@@ -2,11 +2,12 @@
 
 Hermes is an ACP client gateway that exposes ACP-compatible coding agents to chat platforms.
 
-V1 includes Telegram long-polling control. V2 is prepared with a Discord adapter interface placeholder.
+Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegram`) in polling mode. V2 is prepared with a Discord adapter interface placeholder.
 
 ## Features
 
 - ACP transport over `stdio` only.
+- Telegram bot transport via Chat SDK polling.
 - One persistent process per configured agent.
 - Manual session creation via `/session` only.
 - Auto-approval for `session/request_permission`.
@@ -64,7 +65,7 @@ npm test
 - `src/config/*` config schema + loader
 - `src/core/acp/*` ACP connection and agent process manager
 - `src/core/orchestrator/*` command + prompt orchestration
-- `src/adapters/telegram/*` Telegram adapter (V1)
+- `src/adapters/telegram/*` Telegram adapter backed by Chat SDK
 - `src/adapters/discord/*` Discord placeholder (V2)
 - `tools/fake-acp-agent.ts` ACP fake agent for integration tests
 - `tests/*` unit and integration tests

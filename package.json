@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ACP multi-channel gateway (Telegram V1, Discord-ready V2)",
+  "description": "ACP multi-channel gateway (Telegram via Chat SDK, Discord-ready V2)",
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
+    "@chat-adapter/state-memory": "^4.17.0",
+    "@chat-adapter/telegram": "^4.17.0",
+    "chat": "^4.17.0",
     "dotenv": "^17.3.1",
-    "https-proxy-agent": "^7.0.6",
     "pino": "^10.3.1",
-    "telegraf": "^4.16.3",
+    "undici": "^7.22.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },

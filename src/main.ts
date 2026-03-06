@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   const logger = pino({ level: config.app.logLevel });
 
   if (!config.telegram.enabled) {
-    throw new Error("Telegram must be enabled in V1.");
+    throw new Error("Telegram must be enabled.");
   }
 
   const channel = new TelegramAdapter(config.telegram.token, logger.child({ component: "telegram" }));

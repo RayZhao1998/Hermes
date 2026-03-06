@@ -12,6 +12,7 @@ class MockChannelAdapter implements ChannelAdapter {
   readonly platform = "telegram" as const;
 
   messages: Array<{ chatId: string; text: string }> = [];
+  typingSignals: string[] = [];
   private handler?: (msg: MessageEnvelope) => Promise<void>;
 
   onMessage(handler: (msg: MessageEnvelope) => Promise<void>): void {
@@ -28,6 +29,10 @@ class MockChannelAdapter implements ChannelAdapter {
 
   async sendMessage(chatId: string, text: string): Promise<void> {
     this.messages.push({ chatId, text });
+  }
+
+  async setTyping(chatId: string): Promise<void> {
+    this.typingSignals.push(chatId);
   }
 
   async emit(text: string, overrides?: Partial<MessageEnvelope>): Promise<void> {
@@ -141,5 +146,17 @@ describe("ChatOrchestrator + ACP integration", () => {
     expect(adapter.messages.some((m) => m.text.includes("Cancellation requested"))).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(adapter.messages.some((m) => m.text.includes("Turn complete."))).toBe(false);
+  });
+
+  it("emits typing signal while session updates are streaming", async () => {
+    await adapter.emit("/session");
+    adapter.clearMessages();
+    adapter.typingSignals.length = 0;
+
+    await adapter.emit("hello typing");
+    await waitFor(() => adapter.messages.length > 0);
+
+    expect(adapter.typingSignals.length).toBeGreaterThan(0);
+    expect(adapter.typingSignals.every((chatId) => chatId === "1001")).toBe(true);
   });
 });

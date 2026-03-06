@@ -11,6 +11,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Hermes.";
 const NO_SESSION_TEXT = "No active session. Run /session first.";
 const BUSY_TEXT = "A turn is already in progress. Use /cancel to interrupt it.";
+const TYPING_REFRESH_MS = 4000;
 
 type RenderEvent =
   | {
@@ -168,6 +169,7 @@ export class ChatOrchestrator {
   private readonly agentManager: AgentProcessManager;
   private readonly accessControl: AccessControlConfig;
   private readonly logger: Logger;
+  private readonly typingLastSentAtByChat = new Map<string, number>();
 
   constructor(options: ChatOrchestratorOptions) {
     this.channel = options.channel;
@@ -318,6 +320,7 @@ export class ChatOrchestrator {
     };
 
     const unsubscribe = client.onSessionUpdate(sessionId, async (update) => {
+      await this.setTypingIfSupported(message.chatId);
       const events = renderEventsFromUpdate(update);
       for (const event of events) {
         if (event.kind === "chunk") {
@@ -331,6 +334,7 @@ export class ChatOrchestrator {
     });
 
     try {
+      await this.setTypingIfSupported(message.chatId);
       await client.prompt(sessionId, message.text);
       await flushChunkBuffer();
       if (!emittedContent) {
@@ -350,6 +354,27 @@ export class ChatOrchestrator {
       if (latest?.activeTurnId === turnId) {
         this.stateStore.setActiveTurn(chatKey, undefined);
       }
+      this.typingLastSentAtByChat.delete(message.chatId);
+    }
+  }
+
+  private async setTypingIfSupported(chatId: string): Promise<void> {
+    if (!this.channel.setTyping) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastSentAt = this.typingLastSentAtByChat.get(chatId) ?? 0;
+    if (now - lastSentAt < TYPING_REFRESH_MS) {
+      return;
+    }
+
+    this.typingLastSentAtByChat.set(chatId, now);
+    try {
+      await this.channel.setTyping(chatId);
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      this.logger.debug({ chatId, error: err }, "Failed to send typing signal");
     }
   }
 }
