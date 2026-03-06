@@ -12,13 +12,43 @@ import type {
   NewSessionResponse,
   PromptRequest,
   PromptResponse,
+  SessionConfigOption,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 
 interface SessionState {
   abortController?: AbortController;
+  currentModelId: string;
   mcpServers: NewSessionRequest["mcpServers"];
+}
+
+const MODEL_CONFIG_ID = "model";
+
+function buildConfigOptions(currentModelId: string): SessionConfigOption[] {
+  return [
+    {
+      id: MODEL_CONFIG_ID,
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: currentModelId,
+      options: [
+        {
+          value: "gpt-5",
+          name: "GPT-5",
+          description: "Balanced default model.",
+        },
+        {
+          value: "gpt-5-mini",
+          name: "GPT-5 Mini",
+          description: "Lower latency model.",
+        },
+      ],
+    },
+  ];
 }
 
 class FakeAgent implements Agent {
@@ -41,7 +71,10 @@ class FakeAgent implements Agent {
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomUUID();
-    this.sessions.set(sessionId, { mcpServers: params.mcpServers });
+    this.sessions.set(sessionId, {
+      currentModelId: "gpt-5",
+      mcpServers: params.mcpServers,
+    });
     await this.connection.sessionUpdate({
       sessionId,
       update: {
@@ -58,7 +91,38 @@ class FakeAgent implements Agent {
         ],
       },
     });
-    return { sessionId };
+    return {
+      sessionId,
+      configOptions: buildConfigOptions("gpt-5"),
+    };
+  }
+
+  async setSessionConfigOption(params: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> {
+    const session = this.sessions.get(params.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session ${params.sessionId}`);
+    }
+    if (params.configId !== MODEL_CONFIG_ID) {
+      throw new Error(`Unknown config option ${params.configId}`);
+    }
+
+    const allowedModelIds = new Set(["gpt-5", "gpt-5-mini"]);
+    if (!allowedModelIds.has(params.value)) {
+      throw new Error(`Unknown model ${params.value}`);
+    }
+
+    session.currentModelId = params.value;
+    const configOptions = buildConfigOptions(session.currentModelId);
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions,
+      },
+    });
+
+    return { configOptions };
   }
 
   async prompt(params: PromptRequest): Promise<PromptResponse> {
@@ -108,6 +172,19 @@ class FakeAgent implements Agent {
           content: {
             type: "text",
             text: ` [mcp:${names}]`,
+          },
+        },
+      });
+    }
+
+    if (text.toLowerCase().includes("report model")) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: ` [model:${session.currentModelId}]`,
           },
         },
       });

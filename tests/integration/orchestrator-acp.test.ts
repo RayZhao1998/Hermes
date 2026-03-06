@@ -294,6 +294,8 @@ describe("ChatOrchestrator + ACP integration", () => {
         { name: "agents", description: "List configured agents" },
         { name: "agent", description: "Switch the active agent" },
         { name: "new", description: "Create a new ACP session" },
+        { name: "models", description: "List selectable models for the active session" },
+        { name: "model", description: "Set the model for the active session" },
         { name: "status", description: "Show current chat state" },
         { name: "cancel", description: "Cancel the active turn" },
         { name: "fake:explain", description: "Explain the selected code or text." },
@@ -320,7 +322,20 @@ describe("ChatOrchestrator + ACP integration", () => {
 
     const status = adapter.messages.at(-1)?.text;
     expect(status).toContain("Agent: fake");
+    expect(status).toContain("Model: (not available)");
     expect(status).toContain("MCP servers: filesystem (stdio), docs (http)");
+  });
+
+  it("shows the current model in /status after session creation", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/status");
+
+    const status = adapter.messages.at(-1)?.text;
+    expect(status).toContain("Session: ");
+    expect(status).not.toContain("Session: (none)");
+    expect(status).toContain("Model: gpt-5");
   });
 
   it("passes configured MCP servers into session/new", async () => {
@@ -348,11 +363,42 @@ describe("ChatOrchestrator + ACP integration", () => {
           { name: "agents", description: "List configured agents" },
           { name: "agent", description: "Switch the active agent" },
           { name: "new", description: "Create a new ACP session" },
+          { name: "models", description: "List selectable models for the active session" },
+          { name: "model", description: "Set the model for the active session" },
           { name: "status", description: "Show current chat state" },
           { name: "cancel", description: "Cancel the active turn" },
         ],
       },
     ]);
+  });
+
+  it("lists selectable models for the active session", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/models");
+
+    expect(adapter.messages.at(-1)?.text).toContain("Current model: gpt-5");
+    expect(adapter.messages.at(-1)?.text).toContain("* gpt-5 (GPT-5)");
+    expect(adapter.messages.at(-1)?.text).toContain("gpt-5-mini (GPT-5 Mini)");
+  });
+
+  it("switches the active session model", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/model gpt-5-mini");
+    expect(adapter.messages.at(-1)?.text).toContain("Model switched to 'gpt-5-mini'");
+
+    adapter.clearMessages();
+    await adapter.emit("/models");
+    expect(adapter.messages.at(-1)?.text).toContain("Current model: gpt-5-mini");
+    expect(adapter.messages.at(-1)?.text).toContain("* gpt-5-mini (GPT-5 Mini)");
+
+    adapter.clearMessages();
+    await adapter.emit("please report model");
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain("[model:gpt-5-mini]");
   });
 
   it("cancels active turn via /cancel", async () => {

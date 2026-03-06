@@ -7,6 +7,8 @@ export const commandDefinitions = [
   { name: "agents", description: "List configured agents" },
   { name: "agent", description: "Switch the active agent" },
   { name: "new", description: "Create a new ACP session" },
+  { name: "models", description: "List selectable models for the active session" },
+  { name: "model", description: "Set the model for the active session" },
   { name: "status", description: "Show current chat state" },
   { name: "cancel", description: "Cancel the active turn" },
 ] as const satisfies readonly ChatCommandDefinition[];

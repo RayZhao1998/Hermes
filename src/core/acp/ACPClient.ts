@@ -2,12 +2,18 @@ import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclie
 import type {
   AvailableCommand,
   AvailableCommandsUpdate,
+  ConfigOptionUpdate,
   InitializeResponse,
   McpServer,
+  NewSessionResponse,
   PromptResponse,
   PermissionOption,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
+  SessionConfigSelectGroup,
+  SessionConfigSelectOption,
+  SessionModelState,
   SessionNotification,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
@@ -33,12 +39,27 @@ export interface ACPClientOptions {
   logger: Logger;
 }
 
+export interface SelectableModel {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface SessionModelSelection {
+  configId?: string;
+  currentModelId: string;
+  models: SelectableModel[];
+  source: "config_option" | "legacy_models";
+}
+
 export class ACPClient {
   private readonly connection: ClientSideConnection;
   private readonly listeners = new Map<string, Set<SessionUpdateListener>>();
   private readonly permissionHandlers = new Map<string, PermissionRequestHandler>();
   private readonly pendingPermissionsBySession = new Map<string, Set<PendingPermissionRequest>>();
   private readonly availableCommandsBySession = new Map<string, AvailableCommand[]>();
+  private readonly configOptionsBySession = new Map<string, SessionConfigOption[]>();
+  private readonly legacyModelsBySession = new Map<string, SessionModelState>();
   private readonly logger: Logger;
   private initialized = false;
   private initResponse?: InitializeResponse;
@@ -85,6 +106,7 @@ export class ACPClient {
       cwd,
       mcpServers,
     });
+    this.captureSessionState(response.sessionId, response);
     return response.sessionId;
   }
 
@@ -132,6 +154,73 @@ export class ACPClient {
     return [...(this.availableCommandsBySession.get(sessionId) ?? [])];
   }
 
+  getModelSelection(sessionId: string): SessionModelSelection | null {
+    const configSelection = toModelSelectionFromConfigOptions(this.configOptionsBySession.get(sessionId));
+    if (configSelection) {
+      return configSelection;
+    }
+
+    const legacyModels = this.legacyModelsBySession.get(sessionId);
+    if (!legacyModels) {
+      return null;
+    }
+
+    return {
+      currentModelId: legacyModels.currentModelId,
+      models: legacyModels.availableModels.map((model) => ({
+        id: model.modelId,
+        name: model.name,
+        description: model.description ?? undefined,
+      })),
+      source: "legacy_models",
+    };
+  }
+
+  async setModel(sessionId: string, modelId: string): Promise<SessionModelSelection> {
+    this.ensureInitialized();
+
+    const configSelection = toModelSelectionFromConfigOptions(this.configOptionsBySession.get(sessionId));
+    if (configSelection?.configId) {
+      const response = await this.connection.setSessionConfigOption({
+        sessionId,
+        configId: configSelection.configId,
+        value: modelId,
+      });
+      this.configOptionsBySession.set(sessionId, response.configOptions);
+
+      const updated = toModelSelectionFromConfigOptions(response.configOptions);
+      if (!updated) {
+        throw new Error("Agent did not return model config options after updating the model.");
+      }
+      return updated;
+    }
+
+    const legacyModels = this.legacyModelsBySession.get(sessionId);
+    if (!legacyModels) {
+      throw new Error("Active session does not expose selectable models.");
+    }
+
+    await this.connection.unstable_setSessionModel({
+      sessionId,
+      modelId,
+    });
+
+    this.legacyModelsBySession.set(sessionId, {
+      ...legacyModels,
+      currentModelId: modelId,
+    });
+
+    return this.getModelSelection(sessionId) ?? {
+      currentModelId: modelId,
+      models: legacyModels.availableModels.map((model) => ({
+        id: model.modelId,
+        name: model.name,
+        description: model.description ?? undefined,
+      })),
+      source: "legacy_models",
+    };
+  }
+
   onRequestPermission(sessionId: string, handler: PermissionRequestHandler): () => void {
     this.permissionHandlers.set(sessionId, handler);
 
@@ -155,6 +244,11 @@ export class ACPClient {
     const availableCommands = extractAvailableCommands(params.update);
     if (availableCommands) {
       this.availableCommandsBySession.set(params.sessionId, availableCommands);
+    }
+
+    const configOptions = extractConfigOptions(params.update);
+    if (configOptions) {
+      this.configOptionsBySession.set(params.sessionId, configOptions);
     }
 
     const scoped = this.listeners.get(params.sessionId);
@@ -281,6 +375,23 @@ export class ACPClient {
       });
     }
   }
+
+  private captureSessionState(
+    sessionId: string,
+    response: Pick<NewSessionResponse, "configOptions" | "models">,
+  ): void {
+    if (Array.isArray(response.configOptions)) {
+      this.configOptionsBySession.set(sessionId, response.configOptions);
+    } else {
+      this.configOptionsBySession.delete(sessionId);
+    }
+
+    if (response.models) {
+      this.legacyModelsBySession.set(sessionId, response.models);
+    } else {
+      this.legacyModelsBySession.delete(sessionId);
+    }
+  }
 }
 
 export function extractAvailableCommands(update: SessionUpdate): AvailableCommand[] | null {
@@ -294,4 +405,62 @@ export function extractAvailableCommands(update: SessionUpdate): AvailableComman
   }
 
   return availableCommandsUpdate.availableCommands;
+}
+
+function extractConfigOptions(update: SessionUpdate): SessionConfigOption[] | null {
+  const configOptionUpdate = update as SessionUpdate & ConfigOptionUpdate;
+  if (configOptionUpdate.sessionUpdate !== "config_option_update") {
+    return null;
+  }
+
+  if (!Array.isArray(configOptionUpdate.configOptions)) {
+    return null;
+  }
+
+  return configOptionUpdate.configOptions;
+}
+
+function toModelSelectionFromConfigOptions(
+  configOptions: SessionConfigOption[] | undefined,
+): SessionModelSelection | null {
+  if (!configOptions) {
+    return null;
+  }
+
+  const modelOption = configOptions.find((option) => option.category === "model");
+  if (!modelOption) {
+    return null;
+  }
+
+  return {
+    configId: modelOption.id,
+    currentModelId: modelOption.currentValue,
+    models: flattenConfigOptions(modelOption.options),
+    source: "config_option",
+  };
+}
+
+function flattenConfigOptions(
+  options: SessionConfigOption["options"],
+): SelectableModel[] {
+  if (options.length === 0) {
+    return [];
+  }
+
+  const first = options[0];
+  if (first && "value" in first) {
+    return (options as SessionConfigSelectOption[]).map((option) => ({
+      id: option.value,
+      name: option.name,
+      description: option.description ?? undefined,
+    }));
+  }
+
+  return (options as SessionConfigSelectGroup[]).flatMap((group) =>
+    group.options.map((option) => ({
+      id: option.value,
+      name: `${group.name} / ${option.name}`,
+      description: option.description ?? undefined,
+    }))
+  );
 }

@@ -16,6 +16,7 @@ import { InMemoryChatStateStore } from "../state/InMemoryChatStateStore.js";
 import type { AccessControlConfig } from "../security/isAuthorized.js";
 import { isAuthorizedMessage } from "../security/isAuthorized.js";
 import { AgentProcessManager } from "../acp/AgentProcessManager.js";
+import type { SessionModelSelection } from "../acp/ACPClient.js";
 import { extractAvailableCommands } from "../acp/ACPClient.js";
 
 const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Hermes.";
@@ -238,6 +239,20 @@ function formatMcpServers(servers: McpServer[]): string {
   return servers.map((server) => `${server.name} (${getMcpServerType(server)})`).join(", ");
 }
 
+function formatModelSelection(selection: SessionModelSelection): string {
+  if (selection.models.length === 0) {
+    return "Selectable models:\n(none)";
+  }
+
+  const rows = selection.models.map((model) => {
+    const marker = model.id === selection.currentModelId ? "*" : " ";
+    const suffix = model.description ? ` - ${model.description}` : "";
+    return `${marker} ${model.id} (${model.name})${suffix}`;
+  });
+
+  return [`Current model: ${selection.currentModelId}`, "Selectable models:", ...rows].join("\n");
+}
+
 export interface ChatOrchestratorOptions {
   channel: ChannelAdapter;
   stateStore: InMemoryChatStateStore;
@@ -374,13 +389,76 @@ export class ChatOrchestrator {
         );
         return;
       }
+      case "models": {
+        if (!state.sessionId) {
+          await this.channel.sendMessage(message.chatId, NO_SESSION_TEXT);
+          return;
+        }
+
+        const client = await this.agentManager.getClient(state.activeAgentId);
+        const selection = client.getModelSelection(state.sessionId);
+        if (!selection) {
+          await this.channel.sendMessage(
+            message.chatId,
+            "Active agent does not expose selectable models for this session.",
+          );
+          return;
+        }
+
+        await this.channel.sendMessage(message.chatId, formatModelSelection(selection));
+        return;
+      }
+      case "model": {
+        if (!state.sessionId) {
+          await this.channel.sendMessage(message.chatId, NO_SESSION_TEXT);
+          return;
+        }
+        if (state.activeTurnId) {
+          await this.channel.sendMessage(message.chatId, BUSY_TEXT);
+          return;
+        }
+
+        const modelId = command.args[0];
+        if (!modelId) {
+          await this.channel.sendMessage(message.chatId, "Usage: /model <id>");
+          return;
+        }
+
+        const client = await this.agentManager.getClient(state.activeAgentId);
+        const selection = client.getModelSelection(state.sessionId);
+        if (!selection) {
+          await this.channel.sendMessage(
+            message.chatId,
+            "Active agent does not expose selectable models for this session.",
+          );
+          return;
+        }
+
+        if (!selection.models.some((model) => model.id === modelId)) {
+          await this.channel.sendMessage(
+            message.chatId,
+            `Unknown model '${modelId}'. Run /models to list available options.`,
+          );
+          return;
+        }
+
+        const updated = await client.setModel(state.sessionId, modelId);
+        await this.channel.sendMessage(
+          message.chatId,
+          `Model switched to '${updated.currentModelId}'.`,
+        );
+        return;
+      }
       case "status": {
         const mcpServers = this.agentManager.getAgentMcpServers(state.activeAgentId);
+        const client = await this.agentManager.getClient(state.activeAgentId);
+        const modelSelection = state.sessionId ? client.getModelSelection(state.sessionId) : null;
         await this.channel.sendMessage(
           message.chatId,
           [
             `Agent: ${state.activeAgentId}`,
             `Session: ${state.sessionId ?? "(none)"}`,
+            `Model: ${modelSelection?.currentModelId ?? "(not available)"}`,
             `Turn: ${state.activeTurnId ?? "idle"}`,
             `MCP servers: ${formatMcpServers(mcpServers)}`,
             `Commands: ${state.availableCommands.length === 0

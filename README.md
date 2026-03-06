@@ -52,6 +52,8 @@ npm run dev
 - `/agents` list configured agents and runtime status
 - `/agent <id>` switch active agent for current chat (resets session)
 - `/new` create a new ACP session
+- `/models` list selectable models for the active ACP session, if the agent exposes them
+- `/model <id>` set the model for the active ACP session
 - `/status` show current agent/session/turn state, including configured MCP servers
 - `/cancel` cancel in-flight prompt turn
 - ACP slash commands published by the active session are namespaced as `/<agent-id>:<command>` to avoid collisions with Hermes commands, and Hermes rewrites them back to the raw `/<command> ...` prompt before sending them to the agent.
