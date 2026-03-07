@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { access, mkdir, readFile } from "node:fs/promises";
 import YAML from "yaml";
 import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
@@ -8,6 +10,8 @@ import {
   type LoadedBotConfig,
   type LoadedHermesConfig,
   type LoadedProfileConfig,
+  type LoadedWorkspaceConfig,
+  DEFAULT_WORKSPACE_ID,
   hermesConfigSchema,
 } from "./schema.js";
 
@@ -80,6 +84,44 @@ function resolveBots(config: HermesConfig, profiles: LoadedProfileConfig[]): Loa
   });
 }
 
+function expandWorkspacePath(workspacePath: string): string {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
+  if (workspacePath === "~") {
+    return homeDir;
+  }
+
+  if (workspacePath.startsWith("~/") || workspacePath.startsWith("~\\")) {
+    if (!homeDir) {
+      throw new Error(`Cannot expand workspace path '${workspacePath}' without a home directory.`);
+    }
+    return path.join(homeDir, workspacePath.slice(2));
+  }
+
+  return workspacePath;
+}
+
+function resolveWorkspaces(config: HermesConfig, defaultWorkspaceDir: string): LoadedWorkspaceConfig[] {
+  const workspaces = config.workspaces.map((workspace) => {
+    const resolvedPath = expandWorkspacePath(workspace.path);
+    if (!path.isAbsolute(resolvedPath)) {
+      throw new Error(`Workspace '${workspace.id}' must use an absolute path.`);
+    }
+
+    return {
+      id: workspace.id,
+      path: resolvedPath,
+    };
+  });
+
+  return [
+    {
+      id: DEFAULT_WORKSPACE_ID,
+      path: defaultWorkspaceDir,
+    },
+    ...workspaces,
+  ];
+}
+
 export async function configExists(configPath = getHermesConfigPath()): Promise<boolean> {
   try {
     await access(configPath);
@@ -102,11 +144,13 @@ export async function loadConfig(
   const workspaceDir = getHermesWorkspaceDir();
   await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
 
+  const workspaces = resolveWorkspaces(parsed, workspaceDir);
   const profiles = resolveProfiles(parsed, workspaceDir);
   const bots = resolveBots(parsed, profiles);
 
   return {
     app: parsed.app,
+    workspaces,
     profiles,
     bots,
     configPath,

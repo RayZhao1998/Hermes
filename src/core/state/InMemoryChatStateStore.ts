@@ -3,6 +3,7 @@ import type { AvailableCommand } from "@agentclientprotocol/sdk";
 export interface ChatState {
   chatKey: string;
   activeAgentId: string;
+  activeWorkspaceId: string;
   sessionId?: string;
   activeTurnId?: string;
   availableCommands: AvailableCommand[];
@@ -15,7 +16,7 @@ export class InMemoryChatStateStore {
     return this.states.get(chatKey);
   }
 
-  getOrCreate(chatKey: string, defaultAgentId: string): ChatState {
+  getOrCreate(chatKey: string, defaultAgentId: string, defaultWorkspaceId: string): ChatState {
     const existing = this.states.get(chatKey);
     if (existing) {
       return existing;
@@ -24,6 +25,7 @@ export class InMemoryChatStateStore {
     const created: ChatState = {
       chatKey,
       activeAgentId: defaultAgentId,
+      activeWorkspaceId: defaultWorkspaceId,
       availableCommands: [],
     };
     this.states.set(chatKey, created);
@@ -33,6 +35,15 @@ export class InMemoryChatStateStore {
   setActiveAgent(chatKey: string, activeAgentId: string): ChatState {
     const state = this.require(chatKey);
     state.activeAgentId = activeAgentId;
+    state.sessionId = undefined;
+    state.activeTurnId = undefined;
+    state.availableCommands = [];
+    return state;
+  }
+
+  setActiveWorkspace(chatKey: string, activeWorkspaceId: string): ChatState {
+    const state = this.require(chatKey);
+    state.activeWorkspaceId = activeWorkspaceId;
     state.sessionId = undefined;
     state.activeTurnId = undefined;
     state.availableCommands = [];

@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import type { AvailableCommand, McpServer, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
-import type { OutputMode, ToolApprovalMode } from "../../config/schema.js";
+import type { LoadedWorkspaceConfig, OutputMode, ToolApprovalMode } from "../../config/schema.js";
 import {
   CommandRouter,
   mergeCommandDefinitions,
@@ -254,11 +254,20 @@ function formatModelSelection(selection: SessionModelSelection): string {
   return [`Current model: ${selection.currentModelId}`, "Selectable models:", ...rows].join("\n");
 }
 
+function formatWorkspaceList(workspaces: readonly LoadedWorkspaceConfig[], activeWorkspaceId: string): string {
+  return workspaces.map((workspace) => {
+    const marker = workspace.id === activeWorkspaceId ? "*" : " ";
+    return `${marker} ${workspace.id} - ${workspace.path}`;
+  }).join("\n");
+}
+
 export interface ChatOrchestratorOptions {
   channel: ChannelAdapter;
   stateStore: InMemoryChatStateStore;
   router: CommandRouter;
   agentManager: AgentProcessManager;
+  workspaces: LoadedWorkspaceConfig[];
+  defaultWorkspaceId: string;
   accessControl: AccessControlConfig;
   outputMode: OutputMode;
   toolApprovalMode: ToolApprovalMode;
@@ -270,6 +279,9 @@ export class ChatOrchestrator {
   private readonly stateStore: InMemoryChatStateStore;
   private readonly router: CommandRouter;
   private readonly agentManager: AgentProcessManager;
+  private readonly workspacesById: Map<string, LoadedWorkspaceConfig>;
+  private readonly orderedWorkspaces: LoadedWorkspaceConfig[];
+  private readonly defaultWorkspaceId: string;
   private readonly accessControl: AccessControlConfig;
   private readonly outputMode: OutputMode;
   private readonly toolApprovalMode: ToolApprovalMode;
@@ -282,10 +294,17 @@ export class ChatOrchestrator {
     this.stateStore = options.stateStore;
     this.router = options.router;
     this.agentManager = options.agentManager;
+    this.orderedWorkspaces = options.workspaces;
+    this.workspacesById = new Map(options.workspaces.map((workspace) => [workspace.id, workspace]));
+    this.defaultWorkspaceId = options.defaultWorkspaceId;
     this.accessControl = options.accessControl;
     this.outputMode = options.outputMode;
     this.toolApprovalMode = options.toolApprovalMode;
     this.logger = options.logger;
+
+    if (!this.workspacesById.has(this.defaultWorkspaceId)) {
+      throw new Error(`Unknown default workspace '${this.defaultWorkspaceId}'.`);
+    }
   }
 
   async start(): Promise<void> {
@@ -316,7 +335,11 @@ export class ChatOrchestrator {
 
     const chatKey = `${message.platform}:${message.chatId}`;
     const isNewChat = !this.stateStore.get(chatKey);
-    const state = this.stateStore.getOrCreate(chatKey, this.agentManager.getDefaultAgentId());
+    const state = this.stateStore.getOrCreate(
+      chatKey,
+      this.agentManager.getDefaultAgentId(),
+      this.defaultWorkspaceId,
+    );
     if (isNewChat) {
       await this.syncCommands(chatKey, message.chatId);
     }
@@ -341,7 +364,11 @@ export class ChatOrchestrator {
   }
 
   private async handleCommand(chatKey: string, message: MessageEnvelope, command: ParsedCommand): Promise<void> {
-    const state = this.stateStore.getOrCreate(chatKey, this.agentManager.getDefaultAgentId());
+    const state = this.stateStore.getOrCreate(
+      chatKey,
+      this.agentManager.getDefaultAgentId(),
+      this.defaultWorkspaceId,
+    );
 
     switch (command.name) {
       case "agents": {
@@ -373,15 +400,75 @@ export class ChatOrchestrator {
         await this.channel.sendMessage(message.chatId, `Active agent switched to '${agentId}'. Session reset; run /new.`);
         return;
       }
+      case "workspace": {
+        const workspaceId = command.args[0];
+        if (!workspaceId) {
+          if (this.channel.showWorkspacePicker) {
+            await this.channel.showWorkspacePicker(
+              message.chatId,
+              this.orderedWorkspaces.map((workspace) => ({
+                id: workspace.id,
+                path: workspace.path,
+                selected: workspace.id === state.activeWorkspaceId,
+              })),
+            );
+            return;
+          }
+
+          await this.channel.sendMessage(
+            message.chatId,
+            [
+              `Current workspace: ${state.activeWorkspaceId}`,
+              "Available workspaces:",
+              formatWorkspaceList(this.orderedWorkspaces, state.activeWorkspaceId),
+            ].join("\n"),
+          );
+          return;
+        }
+
+        const workspace = this.workspacesById.get(workspaceId);
+        if (!workspace) {
+          await this.channel.sendMessage(
+            message.chatId,
+            [
+              `Unknown workspace '${workspaceId}'.`,
+              "Available workspaces:",
+              formatWorkspaceList(this.orderedWorkspaces, state.activeWorkspaceId),
+            ].join("\n"),
+          );
+          return;
+        }
+        if (state.activeTurnId) {
+          await this.channel.sendMessage(message.chatId, BUSY_TEXT);
+          return;
+        }
+        if (workspace.id === state.activeWorkspaceId) {
+          await this.channel.sendMessage(
+            message.chatId,
+            `Workspace '${workspace.id}' is already active.\nPath: ${workspace.path}`,
+          );
+          return;
+        }
+
+        this.releaseSessionBinding(chatKey);
+        this.stateStore.setActiveWorkspace(chatKey, workspace.id);
+        await this.syncCommands(chatKey, message.chatId);
+        await this.channel.sendMessage(
+          message.chatId,
+          `Workspace switched to '${workspace.id}'.\nPath: ${workspace.path}\nSession reset; run /new.`,
+        );
+        return;
+      }
       case "new": {
         if (state.activeTurnId) {
           await this.channel.sendMessage(message.chatId, BUSY_TEXT);
           return;
         }
 
+        const workspace = this.requireWorkspace(state.activeWorkspaceId);
         const client = await this.agentManager.getClient(state.activeAgentId);
         const sessionId = await client.newSession(
-          this.agentManager.getAgentCwd(state.activeAgentId),
+          workspace.path,
           this.agentManager.getAgentMcpServers(state.activeAgentId),
         );
         this.stateStore.setSession(chatKey, sessionId);
@@ -389,7 +476,7 @@ export class ChatOrchestrator {
         await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(
           message.chatId,
-          `Session created.\nAgent: ${state.activeAgentId}\nSession ID: ${sessionId}`,
+          `Session created.\nAgent: ${state.activeAgentId}\nWorkspace: ${workspace.id}\nSession ID: ${sessionId}`,
         );
         return;
       }
@@ -454,6 +541,7 @@ export class ChatOrchestrator {
         return;
       }
       case "status": {
+        const workspace = this.requireWorkspace(state.activeWorkspaceId);
         const mcpServers = this.agentManager.getAgentMcpServers(state.activeAgentId);
         const client = await this.agentManager.getClient(state.activeAgentId);
         const modelSelection = state.sessionId ? client.getModelSelection(state.sessionId) : null;
@@ -461,6 +549,7 @@ export class ChatOrchestrator {
           message.chatId,
           [
             `Agent: ${state.activeAgentId}`,
+            `Workspace: ${workspace.id} (${workspace.path})`,
             `Session: ${state.sessionId ?? "(none)"}`,
             `Model: ${modelSelection?.currentModelId ?? "(not available)"}`,
             `Turn: ${state.activeTurnId ?? "idle"}`,
@@ -810,6 +899,14 @@ export class ChatOrchestrator {
 
   private toChatCommandDefinition(agentId: string, command: AvailableCommand): { name: string; description: string } {
     return toAgentChatCommandDefinition(agentId, command);
+  }
+
+  private requireWorkspace(workspaceId: string): LoadedWorkspaceConfig {
+    const workspace = this.workspacesById.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Unknown workspace '${workspaceId}'.`);
+    }
+    return workspace;
   }
 
   private async setTypingIfSupported(chatId: string): Promise<void> {

@@ -1,9 +1,20 @@
+import { mkdir, mkdtemp } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { OutputMode, ToolApprovalMode } from "../../src/config/schema.js";
+import {
+  DEFAULT_WORKSPACE_ID,
+  type LoadedWorkspaceConfig,
+  type OutputMode,
+  type ToolApprovalMode,
+} from "../../src/config/schema.js";
 import { AgentProcessManager } from "../../src/core/acp/AgentProcessManager.js";
-import type { ChannelAdapter, OutboundMessageHandle } from "../../src/core/channel/ChannelAdapter.js";
+import type {
+  ChannelAdapter,
+  OutboundMessageHandle,
+  WorkspacePickerOption,
+} from "../../src/core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js";
 import type { ToolPermissionDecision, ToolPermissionRequest } from "../../src/core/channel/PermissionRequest.js";
 import { ChatOrchestrator } from "../../src/core/orchestrator/ChatOrchestrator.js";
@@ -24,6 +35,7 @@ class MockChannelAdapter implements ChannelAdapter {
   messages: Array<{ chatId: string; text: string; messageId: string }> = [];
   edits: Array<{ chatId: string; text: string; messageId: string }> = [];
   syncedCommands: Array<{ chatId: string; commands: readonly ChatCommandDefinition[] }> = [];
+  workspacePickers: Array<{ chatId: string; options: readonly WorkspacePickerOption[] }> = [];
   typingSignals: string[] = [];
   pendingPermissionRequests: PendingPermissionRequest[] = [];
   private nextMessageId = 1;
@@ -69,6 +81,10 @@ class MockChannelAdapter implements ChannelAdapter {
 
   async syncCommands(chatId: string, commands: readonly ChatCommandDefinition[]): Promise<void> {
     this.syncedCommands.push({ chatId, commands });
+  }
+
+  async showWorkspacePicker(chatId: string, options: readonly WorkspacePickerOption[]): Promise<void> {
+    this.workspacePickers.push({ chatId, options });
   }
 
   async requestPermission(
@@ -147,6 +163,8 @@ describe("ChatOrchestrator + ACP integration", () => {
   let manager: AgentProcessManager;
   let orchestrator: ChatOrchestrator;
   let logger: Logger;
+  let workspaces: LoadedWorkspaceConfig[];
+  let workspaceRoot: string;
 
   async function startOrchestrator(
     toolApprovalMode: ToolApprovalMode = "auto",
@@ -157,6 +175,8 @@ describe("ChatOrchestrator + ACP integration", () => {
       stateStore: new InMemoryChatStateStore(),
       router: new CommandRouter(),
       agentManager: manager,
+      workspaces,
+      defaultWorkspaceId: "repo",
       accessControl: {
         allowChats: ["telegram:1001"],
         allowUsers: [],
@@ -174,6 +194,14 @@ describe("ChatOrchestrator + ACP integration", () => {
     logger = pino({ enabled: false });
     const tsxCli = path.resolve(process.cwd(), "node_modules/tsx/dist/cli.mjs");
     const fakeAgent = path.resolve(process.cwd(), "tools/fake-acp-agent.ts");
+    workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "hermes-workspace-"));
+    await mkdir(path.join(workspaceRoot, "repo"), { recursive: true });
+    await mkdir(path.join(workspaceRoot, "alt"), { recursive: true });
+    workspaces = [
+      { id: DEFAULT_WORKSPACE_ID, path: workspaceRoot },
+      { id: "repo", path: path.join(workspaceRoot, "repo") },
+      { id: "alt", path: path.join(workspaceRoot, "alt") },
+    ];
 
     manager = new AgentProcessManager(
       [
@@ -181,7 +209,7 @@ describe("ChatOrchestrator + ACP integration", () => {
           id: "fake",
           command: process.execPath,
           args: [tsxCli, fakeAgent],
-          cwd: process.cwd(),
+          cwd: workspaceRoot,
           env: {},
         },
       ],
@@ -190,7 +218,7 @@ describe("ChatOrchestrator + ACP integration", () => {
         {
           name: "filesystem",
           command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-filesystem", process.cwd()],
+          args: ["-y", "@modelcontextprotocol/server-filesystem", workspaceRoot],
           env: [],
         },
         {
@@ -335,6 +363,7 @@ describe("ChatOrchestrator + ACP integration", () => {
       commands: [
         { name: "agents", description: "List configured agents" },
         { name: "agent", description: "Switch the active agent" },
+        { name: "workspace", description: "Switch the active workspace" },
         { name: "new", description: "Create a new ACP session" },
         { name: "models", description: "List selectable models for the active session" },
         { name: "model", description: "Set the model for the active session" },
@@ -364,8 +393,39 @@ describe("ChatOrchestrator + ACP integration", () => {
 
     const status = adapter.messages.at(-1)?.text;
     expect(status).toContain("Agent: fake");
+    expect(status).toContain(`Workspace: repo (${path.join(workspaceRoot, "repo")})`);
     expect(status).toContain("Model: (not available)");
     expect(status).toContain("MCP servers: filesystem (stdio), docs (http)");
+  });
+
+  it("shows a workspace picker with configured workspace ids", async () => {
+    await adapter.emit("/workspace");
+
+    expect(adapter.workspacePickers).toEqual([
+      {
+        chatId: "1001",
+        options: [
+          { id: DEFAULT_WORKSPACE_ID, path: workspaceRoot, selected: false },
+          { id: "repo", path: path.join(workspaceRoot, "repo"), selected: true },
+          { id: "alt", path: path.join(workspaceRoot, "alt"), selected: false },
+        ],
+      },
+    ]);
+  });
+
+  it("switches workspace and uses it for the next session", async () => {
+    await adapter.emit("/workspace alt");
+    expect(adapter.messages.at(-1)?.text).toContain("Workspace switched to 'alt'");
+
+    adapter.clearMessages();
+    await adapter.emit("/new");
+    expect(adapter.messages.at(-1)?.text).toContain("Workspace: alt");
+
+    adapter.clearMessages();
+    await adapter.emit("please report cwd");
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[cwd:")));
+
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain(`[cwd:${path.join(workspaceRoot, "alt")}]`);
   });
 
   it("shows the current model in /status after session creation", async () => {
@@ -404,6 +464,7 @@ describe("ChatOrchestrator + ACP integration", () => {
         commands: [
           { name: "agents", description: "List configured agents" },
           { name: "agent", description: "Switch the active agent" },
+          { name: "workspace", description: "Switch the active workspace" },
           { name: "new", description: "Create a new ACP session" },
           { name: "models", description: "List selectable models for the active session" },
           { name: "model", description: "Set the model for the active session" },

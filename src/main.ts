@@ -74,6 +74,8 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
         stateStore: new InMemoryChatStateStore(),
         router: new CommandRouter(),
         agentManager: manager,
+        workspaces: config.workspaces,
+        defaultWorkspaceId: bot.defaultWorkspaceId,
         accessControl: bot.access,
         outputMode: bot.profile.outputMode,
         toolApprovalMode: bot.profile.tools.approvalMode,

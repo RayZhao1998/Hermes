@@ -6,6 +6,7 @@ const logLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal
 const outputModeSchema = z.enum(["full", "text_only", "last_text"]);
 const toolApprovalModeSchema = z.enum(["auto", "manual"]);
 const channelSchema = z.enum(["telegram", "discord"]);
+export const DEFAULT_WORKSPACE_ID = "default";
 
 const envVariableSchema = z.object({
   name: z.string().min(1),
@@ -52,6 +53,11 @@ const agentConfigSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
 }).strict();
 
+const workspaceConfigSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+}).strict();
+
 const toolConfigSchema = z.object({
   approvalMode: toolApprovalModeSchema.default("auto"),
 }).strict().default({ approvalMode: "auto" });
@@ -73,6 +79,7 @@ const accessControlSchema = z.object({
 const botBaseSchema = z.object({
   id: z.string().min(1),
   profileId: z.string().min(1),
+  defaultWorkspaceId: z.string().min(1).default(DEFAULT_WORKSPACE_ID),
   enabled: z.boolean().default(true),
   access: accessControlSchema,
 }).strict();
@@ -124,6 +131,7 @@ export const hermesConfigSchema = z
       logLevel: logLevelSchema.default("info"),
     }).strict().default({ logLevel: "info" }),
     agents: z.array(agentConfigSchema).min(1, "At least one agent must be configured."),
+    workspaces: z.array(workspaceConfigSchema).default([]),
     mcpServers: z.array(mcpServerSchema).default([]),
     profiles: z.array(profileConfigSchema).min(1, "At least one profile must be configured."),
     bots: z.array(botConfigSchema).min(1, "At least one bot must be configured."),
@@ -131,9 +139,19 @@ export const hermesConfigSchema = z
   .strict()
   .superRefine((config, ctx) => {
     addDuplicateIssue(config.agents.map((agent) => agent.id), ["agents"], "agent id", ctx);
+    addDuplicateIssue(config.workspaces.map((workspace) => workspace.id), ["workspaces"], "workspace id", ctx);
     addDuplicateIssue(config.mcpServers.map((server) => server.name), ["mcpServers"], "MCP server name", ctx);
     addDuplicateIssue(config.profiles.map((profile) => profile.id), ["profiles"], "profile id", ctx);
     addDuplicateIssue(config.bots.map((bot) => bot.id), ["bots"], "bot id", ctx);
+
+    const workspaceIds = new Set(config.workspaces.map((workspace) => workspace.id));
+    if (workspaceIds.has(DEFAULT_WORKSPACE_ID)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["workspaces"],
+        message: `Workspace id '${DEFAULT_WORKSPACE_ID}' is reserved.`,
+      });
+    }
 
     const agentIds = new Set(config.agents.map((agent) => agent.id));
     const mcpServerNames = new Set(config.mcpServers.map((server) => server.name));
@@ -205,11 +223,20 @@ export const hermesConfigSchema = z
           message: `Bot '${bot.id}' references unknown profile '${bot.profileId}'.`,
         });
       }
+
+      if (bot.defaultWorkspaceId !== DEFAULT_WORKSPACE_ID && !workspaceIds.has(bot.defaultWorkspaceId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["bots", index, "defaultWorkspaceId"],
+          message: `Bot '${bot.id}' references unknown workspace '${bot.defaultWorkspaceId}'.`,
+        });
+      }
     }
   });
 
 export type HermesConfig = z.infer<typeof hermesConfigSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
+export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
 export type ProfileConfig = z.infer<typeof profileConfigSchema>;
 export type BotConfig = z.infer<typeof botConfigSchema>;
 export type TelegramBotConfig = z.infer<typeof telegramBotConfigSchema>;
@@ -234,9 +261,15 @@ export interface LoadedProfileConfig {
   mcpServers: McpServer[];
 }
 
+export interface LoadedWorkspaceConfig {
+  id: string;
+  path: string;
+}
+
 interface LoadedBotConfigBase {
   id: string;
   profileId: string;
+  defaultWorkspaceId: string;
   enabled: boolean;
   access: AccessControlConfig;
   profile: LoadedProfileConfig;
@@ -262,6 +295,7 @@ export type LoadedBotConfig = LoadedTelegramBotConfig | LoadedDiscordBotConfig;
 
 export interface LoadedHermesConfig {
   app: HermesConfig["app"];
+  workspaces: LoadedWorkspaceConfig[];
   profiles: LoadedProfileConfig[];
   bots: LoadedBotConfig[];
   configPath: string;

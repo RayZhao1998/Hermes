@@ -12,6 +12,7 @@ import {
   text,
 } from "@clack/prompts";
 import YAML from "yaml";
+import { DEFAULT_WORKSPACE_ID } from "./schema.js";
 import type {
   AgentConfig,
   HermesConfig,
@@ -389,6 +390,7 @@ function buildConfig(params: {
       logLevel: params.logLevel,
     },
     agents: params.agents,
+    workspaces: [],
     mcpServers: params.mcpServers,
     profiles: [
       {
@@ -407,6 +409,7 @@ function buildConfig(params: {
         id: params.botId,
         channel: "telegram",
         profileId: params.profileId,
+        defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
         enabled: true,
         access: {
           allowChats: params.allowChats,
@@ -452,7 +455,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
       `Config path: ${configPath}`,
       `Agent workspace: ${workspaceDir}`,
       "This flow sets up one Telegram bot, one profile, and ACP agents.",
-      "Agent working directory is fixed to the Hermes workspace.",
+      "Chats default to the built-in Hermes workspace and can switch to configured workspaces in Telegram.",
     ].join("\n"),
     "Setup",
   );

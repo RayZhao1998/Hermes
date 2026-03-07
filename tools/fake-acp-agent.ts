@@ -22,6 +22,7 @@ import { Readable, Writable } from "node:stream";
 interface SessionState {
   abortController?: AbortController;
   currentModelId: string;
+  cwd: string;
   mcpServers: NewSessionRequest["mcpServers"];
 }
 
@@ -73,6 +74,7 @@ class FakeAgent implements Agent {
     const sessionId = randomUUID();
     this.sessions.set(sessionId, {
       currentModelId: "gpt-5",
+      cwd: params.cwd,
       mcpServers: params.mcpServers,
     });
     await this.connection.sessionUpdate({
@@ -185,6 +187,19 @@ class FakeAgent implements Agent {
           content: {
             type: "text",
             text: ` [model:${session.currentModelId}]`,
+          },
+        },
+      });
+    }
+
+    if (text.toLowerCase().includes("report cwd")) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: ` [cwd:${session.cwd}]`,
           },
         },
       });

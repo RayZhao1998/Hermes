@@ -69,15 +69,17 @@ The generated config creates one default profile and one Telegram bot. Telegram 
 
 ## Setup
 
-Hermes uses `~/.hermes/workspace` as its agent workspace.
+Hermes keeps a built-in default workspace at `~/.hermes/workspace`.
 
 Config shape:
 
 - `agents` declares ACP agent processes such as `id`, `command`, `args`, and `env`
+- `workspaces` declares named workspace ids and absolute project paths that chats can switch to via Telegram
 - `mcpServers` declares reusable MCP server definitions by `name`
 - `profiles` declares reusable runtime behavior such as `defaultAgentId`, enabled agents, MCP servers, output mode, and tool approval
-- `bots` declares concrete chat bot instances with `channel`, `profileId`, bot-specific `access`, and adapter credentials
-- Hermes always runs agents inside `~/.hermes/workspace`, so `cwd` is not part of agent config
+- `bots` declares concrete chat bot instances with `channel`, `profileId`, `defaultWorkspaceId`, bot-specific `access`, and adapter credentials
+- Hermes starts ACP agent processes inside `~/.hermes/workspace`, so `cwd` is not part of agent config
+- Each chat can switch its active workspace with `/workspace`; new sessions start in the selected workspace
 
 If you already use OpenClaw, you can copy everything from `~/.openclaw/workspace` into `~/.hermes/workspace` and keep working with the same instructions, memory files, and supporting assets.
 
@@ -98,6 +100,7 @@ Useful commands:
 
 - `/agents` list configured agents and runtime status
 - `/agent <id>` switch the active agent for the current chat
+- `/workspace` open a workspace picker and switch the active workspace for the current chat
 - `/new` create a new ACP session
 - `/models` list models exposed by the active session
 - `/model <id>` switch the active model

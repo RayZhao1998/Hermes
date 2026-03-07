@@ -8,6 +8,12 @@ export interface OutboundMessageHandle {
   threadId?: string;
 }
 
+export interface WorkspacePickerOption {
+  id: string;
+  path: string;
+  selected: boolean;
+}
+
 export interface ChannelAdapter {
   platform: Platform;
   start(): Promise<void>;
@@ -16,6 +22,7 @@ export interface ChannelAdapter {
   editMessage?(message: OutboundMessageHandle, text: string): Promise<OutboundMessageHandle>;
   setTyping?(chatId: string): Promise<void>;
   syncCommands?(chatId: string, commands: readonly ChatCommandDefinition[]): Promise<void>;
+  showWorkspacePicker?(chatId: string, options: readonly WorkspacePickerOption[]): Promise<void>;
   requestPermission?(
     chatId: string,
     request: ToolPermissionRequest,

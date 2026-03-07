@@ -6,6 +6,7 @@ export interface ChatCommandDefinition {
 export const commandDefinitions = [
   { name: "agents", description: "List configured agents" },
   { name: "agent", description: "Switch the active agent" },
+  { name: "workspace", description: "Switch the active workspace" },
   { name: "new", description: "Create a new ACP session" },
   { name: "models", description: "List selectable models for the active session" },
   { name: "model", description: "Set the model for the active session" },

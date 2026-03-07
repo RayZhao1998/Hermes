@@ -69,15 +69,17 @@ npx hermes-gateway@latest
 
 ## 配置
 
-Hermes 使用 `~/.hermes/workspace` 作为 agent 工作区。
+Hermes 内置了默认工作区 `~/.hermes/workspace`。
 
 当前配置结构：
 
 - `agents` 只描述 ACP agent 进程本身，例如 `id`、`command`、`args` 和 `env`
+- `workspaces` 描述具名工作区，配置 `id` 和绝对路径，聊天会话可以在 Telegram 中切换
 - `mcpServers` 描述可复用的 MCP server 定义，通过 `name` 引用
 - `profiles` 描述可复用的运行配置，例如 `defaultAgentId`、启用的 agent、MCP server、输出模式和工具审批模式
-- `bots` 描述实际接入的聊天 bot 实例，包括 `channel`、`profileId`、bot 自己的 `access` 和适配器凭据
-- Hermes 总是让 agent 运行在 `~/.hermes/workspace` 中，因此 `cwd` 不属于 agent 配置的一部分
+- `bots` 描述实际接入的聊天 bot 实例，包括 `channel`、`profileId`、`defaultWorkspaceId`、bot 自己的 `access` 和适配器凭据
+- Hermes 会让 ACP agent 进程从 `~/.hermes/workspace` 启动，因此 `cwd` 不属于 agent 配置的一部分
+- 每个聊天会话都可以通过 `/workspace` 切换当前工作区，新的 session 会在选中的工作区中启动
 
 如果你已经在使用 OpenClaw，可以直接把 `~/.openclaw/workspace` 中的所有内容复制到 `~/.hermes/workspace`，继续沿用原有的指令文件、记忆文件和其他辅助资产。
 
@@ -98,6 +100,7 @@ cp -R ~/.openclaw/workspace/. ~/.hermes/workspace/
 
 - `/agents` 查看已配置 agent 及其运行状态
 - `/agent <id>` 切换当前聊天会话的活跃 agent
+- `/workspace` 打开工作区选择器，并切换当前聊天会话的工作区
 - `/new` 创建新的 ACP session
 - `/models` 查看当前 session 暴露的模型
 - `/model <id>` 切换当前模型

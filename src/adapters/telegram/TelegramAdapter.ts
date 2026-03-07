@@ -18,7 +18,11 @@ import {
 } from "chat";
 import type { Logger } from "pino";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
-import type { ChannelAdapter, OutboundMessageHandle } from "../../core/channel/ChannelAdapter.js";
+import type {
+  ChannelAdapter,
+  OutboundMessageHandle,
+  WorkspacePickerOption,
+} from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
 import type { ToolPermissionDecision, ToolPermissionRequest } from "../../core/channel/PermissionRequest.js";
 import {
@@ -32,6 +36,7 @@ import {
 
 let globalProxyConfigured = false;
 const PERMISSION_ACTION_ID = "hermes_permission";
+const WORKSPACE_ACTION_ID = "hermes_workspace";
 
 function resolveProxyUrl(): string | undefined {
   return (
@@ -141,6 +146,26 @@ function renderPermissionCard(toolText: string, actions: ButtonElement[]): CardE
   });
 }
 
+function renderWorkspacePickerCard(options: readonly WorkspacePickerOption[]): CardElement {
+  const lines = [
+    "Select a workspace for the next /new session:",
+    ...options.map((option) => `${option.id} - ${option.path}${option.selected ? " current" : ""}`),
+  ];
+  const actions = options.map((option) => Button({
+    id: WORKSPACE_ACTION_ID,
+    value: option.id,
+    label: option.id,
+    style: option.selected ? "primary" : "default",
+  }));
+
+  return Card({
+    children: [
+      CardText(lines.join("\n")),
+      Actions(actions),
+    ],
+  });
+}
+
 function isTelegramMessageNotModifiedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("message is not modified");
@@ -194,6 +219,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
     this.bot.onAction(PERMISSION_ACTION_ID, async (event) => {
       await this.handlePermissionAction(event);
+    });
+    this.bot.onAction(WORKSPACE_ACTION_ID, async (event) => {
+      await this.handleWorkspaceAction(event);
     });
   }
 
@@ -260,6 +288,10 @@ export class TelegramAdapter implements ChannelAdapter {
       type: "chat",
       chat_id: chatId,
     });
+  }
+
+  async showWorkspacePicker(chatId: string, options: readonly WorkspacePickerOption[]): Promise<void> {
+    await this.telegram.postMessage(this.toThreadId(chatId), renderWorkspacePickerCard(options));
   }
 
   async requestPermission(
@@ -417,6 +449,24 @@ export class TelegramAdapter implements ChannelAdapter {
       { outcome: "selected", optionId: tokenInfo.optionId },
       `Permission resolved for ${approval.toolTitle}: ${label}`,
     );
+  }
+
+  private async handleWorkspaceAction(event: ActionEvent): Promise<void> {
+    const workspaceId = event.value?.trim();
+    if (!workspaceId || !this.onMessageHandler) {
+      return;
+    }
+
+    const { chatId } = this.telegram.decodeThreadId(event.threadId);
+    await this.onMessageHandler({
+      platform: "telegram",
+      chatId,
+      userId: event.user.userId,
+      messageId: event.messageId,
+      text: `/workspace ${workspaceId}`,
+      isCommand: true,
+      timestamp: Date.now(),
+    });
   }
 
   private async settlePendingApproval(
