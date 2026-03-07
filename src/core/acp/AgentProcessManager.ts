@@ -145,7 +145,7 @@ export class AgentProcessManager {
 
     const client = new ACPClient(proc, {
       clientName: "hermes",
-      clientVersion: "0.1.0",
+      clientVersion: "0.0.1",
       logger: this.logger.child({ agentId: config.id }),
     });
 
@@ -164,7 +164,7 @@ export class AgentProcessManager {
     });
 
     try {
-      await client.initialize("hermes", "0.1.0");
+      await client.initialize("hermes", "0.0.1");
       record.client = client;
       record.status = "running";
       record.restartAttempts = 0;
