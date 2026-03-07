@@ -1,19 +1,43 @@
 {
-  "name": "hermes",
+  "name": "hermes-gateway",
   "version": "0.1.0",
   "type": "module",
   "description": "ACP multi-channel gateway (Telegram via Chat SDK, Discord-ready V2)",
+  "keywords": [
+    "acp",
+    "agent",
+    "telegram",
+    "chat-sdk",
+    "cli"
+  ],
   "bin": {
     "hermes": "dist/src/cli.js"
   },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "release:check": "npm run build && npm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RayZhao1998/Hermes.git"
+  },
+  "homepage": "https://github.com/RayZhao1998/Hermes#readme",
+  "bugs": {
+    "url": "https://github.com/RayZhao1998/Hermes/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",

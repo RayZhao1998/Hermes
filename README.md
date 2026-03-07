@@ -30,7 +30,7 @@ npm install
 2. Run interactive onboarding to create `~/.hermes/config.yaml`:
 
 ```bash
-npx hermes onboard
+npx hermes-gateway onboard
 ```
 
 You can rerun the same command at any time to update the config. During onboarding, Hermes scans your `PATH` for supported ACP agents and auto-configures any that are already installed:
@@ -51,7 +51,7 @@ You can rerun the same command at any time to update the config. During onboardi
 4. Start Hermes:
 
 ```bash
-npx hermes
+npx hermes-gateway
 ```
 
 ## Chat Commands
@@ -73,10 +73,19 @@ npm run build
 npm test
 ```
 
+## Release
+
+The repository includes GitHub Actions for CI and release automation:
+
+- `.github/workflows/ci.yml` runs `npm ci`, `npm run build`, and `npm test` on every push and pull request.
+- `.github/workflows/release.yml` publishes to npm, creates a GitHub Release, and publishes to GitHub Packages only when the package name is scoped.
+
+See [docs/releasing.md](./docs/releasing.md) for the required GitHub secrets and the exact release flow.
+
 ## Project Structure
 
 - `src/main.ts` app entrypoint
-- `src/cli.ts` CLI entrypoint (`npx hermes`, `npx hermes onboard`)
+- `src/cli.ts` CLI entrypoint (`npx hermes-gateway`, `npx hermes-gateway onboard`)
 - `src/config/*` config schema + loader
 - `src/core/acp/*` ACP connection and agent process manager
 - `src/core/orchestrator/*` command + prompt orchestration

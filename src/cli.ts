@@ -16,7 +16,9 @@ async function ensureConfig(configPath: string): Promise<void> {
   }
 
   if (!isInteractiveShell()) {
-    throw new Error(`Hermes config not found at ${configPath}. Run "npx hermes onboard" in an interactive shell.`);
+    throw new Error(
+      `Hermes config not found at ${configPath}. Run "npx hermes-gateway onboard" in an interactive shell.`,
+    );
   }
 
   await runOnboarding({ configPath });
