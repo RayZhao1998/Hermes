@@ -7,8 +7,13 @@ import { InMemoryChatStateStore } from "./core/state/InMemoryChatStateStore.js";
 import { CommandRouter } from "./core/router/CommandRouter.js";
 import { ChatOrchestrator } from "./core/orchestrator/ChatOrchestrator.js";
 
-async function main(): Promise<void> {
-  const config = await loadConfig();
+interface StartHermesOptions {
+  configPath?: string;
+  runtimeCwd?: string;
+}
+
+export async function startHermes(options: StartHermesOptions = {}): Promise<void> {
+  const config = await loadConfig(options.configPath, options.runtimeCwd);
 
   const logger = pino({ level: config.app.logLevel });
 
@@ -48,9 +53,3 @@ async function main(): Promise<void> {
   await orchestrator.start();
   logger.info("Hermes started");
 }
-
-main().catch((error) => {
-  const message = error instanceof Error ? error.stack ?? error.message : String(error);
-  console.error(message);
-  process.exit(1);
-});

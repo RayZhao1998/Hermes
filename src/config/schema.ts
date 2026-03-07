@@ -44,6 +44,11 @@ const agentConfigSchema = z.object({
   mcpServers: z.array(mcpServerSchema).default([]),
   default: z.boolean().optional(),
 });
+const telegramConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  token: z.string().min(1).optional(),
+  tokenEnv: z.string().min(1).default("TELEGRAM_BOT_TOKEN"),
+});
 
 export const hermesConfigSchema = z
   .object({
@@ -58,10 +63,7 @@ export const hermesConfigSchema = z
         allowedUserIds: z.array(z.string()).default([]),
       })
       .default({ allowedChatIds: [], allowedUserIds: [] }),
-    telegram: z.object({
-      enabled: z.boolean().default(true),
-      tokenEnv: z.string().min(1).default("TELEGRAM_BOT_TOKEN"),
-    }),
+    telegram: telegramConfigSchema.default({ enabled: true, tokenEnv: "TELEGRAM_BOT_TOKEN" }),
     tools: z
       .object({
         approvalMode: toolApprovalModeSchema.default("auto"),
@@ -80,6 +82,14 @@ export const hermesConfigSchema = z
         });
       }
       seen.add(agent.id);
+    }
+
+    if (config.telegram.enabled && !config.telegram.token && !config.telegram.tokenEnv) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["telegram"],
+        message: "Telegram token or tokenEnv must be configured when Telegram is enabled.",
+      });
     }
   });
 

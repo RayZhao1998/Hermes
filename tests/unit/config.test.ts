@@ -1,8 +1,9 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
+import { getHermesConfigPath } from "../../src/config/paths.js";
 import { hermesConfigSchema } from "../../src/config/schema.js";
 
 const originalEnv = { ...process.env };
@@ -43,6 +44,41 @@ describe("config loading", () => {
         headers: [{ name: "Authorization", value: "Bearer token" }],
       },
     ]);
+  });
+
+  it("loads config from ~/.hermes/config.yaml by default", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
+    const configPath = getHermesConfigPath(homeDir);
+
+    process.env.HOME = homeDir;
+    process.env.TELEGRAM_BOT_TOKEN = "from-env";
+    await mkdir(path.dirname(configPath), { recursive: true });
+
+    await writeFile(
+      configPath,
+      `agents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadConfig();
+    expect(loaded.configPath).toBe(configPath);
+    expect(loaded.telegram.token).toBe("from-env");
+  });
+
+  it("prefers telegram token from config file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const configPath = path.join(dir, "config.yaml");
+
+    process.env.TELEGRAM_BOT_TOKEN = "from-env";
+
+    await writeFile(
+      configPath,
+      `telegram:\n  enabled: true\n  token: from-config\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadConfig(configPath);
+    expect(loaded.telegram.token).toBe("from-config");
   });
 
   it("throws when telegram token env is missing", async () => {

@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
-import { type LoadedHermesConfig, hermesConfigSchema } from "./schema.js";
+import { getHermesConfigPath } from "./paths.js";
+import { type HermesConfig, type LoadedHermesConfig, hermesConfigSchema } from "./schema.js";
 
-function resolveAgentCwd(configDir: string, cwd: string): string {
-  return path.isAbsolute(cwd) ? cwd : path.resolve(configDir, cwd);
+function resolveAgentCwd(runtimeCwd: string, cwd: string): string {
+  return path.isAbsolute(cwd) ? cwd : path.resolve(runtimeCwd, cwd);
 }
 
 function pickDefaultAgentId(agents: Array<{ id: string; default?: boolean }>): string {
@@ -12,20 +13,47 @@ function pickDefaultAgentId(agents: Array<{ id: string; default?: boolean }>): s
   return explicit?.id ?? agents[0].id;
 }
 
-export async function loadConfig(configPath = path.resolve(process.cwd(), "hermes.config.yaml")): Promise<LoadedHermesConfig> {
-  const raw = await readFile(configPath, "utf8");
-  const parsedYaml = YAML.parse(raw);
-  const parsed = hermesConfigSchema.parse(parsedYaml);
-
-  const token = process.env[parsed.telegram.tokenEnv] ?? "";
-  if (parsed.telegram.enabled && !token) {
-    throw new Error(`Missing Telegram token in env var ${parsed.telegram.tokenEnv}`);
+function resolveTelegramToken(config: HermesConfig, configPath: string): string {
+  if (!config.telegram.enabled) {
+    return "";
   }
 
-  const configDir = path.dirname(configPath);
+  if (config.telegram.token) {
+    return config.telegram.token;
+  }
+
+  const token = process.env[config.telegram.tokenEnv] ?? "";
+  if (!token) {
+    throw new Error(`Missing Telegram token in config or env var ${config.telegram.tokenEnv} (${configPath})`);
+  }
+
+  return token;
+}
+
+export async function configExists(configPath = getHermesConfigPath()): Promise<boolean> {
+  try {
+    await access(configPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function readConfigSource(configPath = getHermesConfigPath()): Promise<HermesConfig> {
+  const raw = await readFile(configPath, "utf8");
+  const parsedYaml = YAML.parse(raw);
+  return hermesConfigSchema.parse(parsedYaml);
+}
+
+export async function loadConfig(
+  configPath = getHermesConfigPath(),
+  runtimeCwd = process.cwd(),
+): Promise<LoadedHermesConfig> {
+  const parsed = await readConfigSource(configPath);
+  const token = resolveTelegramToken(parsed, configPath);
   const agents = parsed.agents.map((agent) => ({
     ...agent,
-    cwd: resolveAgentCwd(configDir, agent.cwd),
+    cwd: resolveAgentCwd(runtimeCwd, agent.cwd),
   }));
 
   return {

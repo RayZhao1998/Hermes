@@ -27,24 +27,31 @@ Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegr
 npm install
 ```
 
-2. Export Telegram bot token (or use `.env`):
+2. Run interactive onboarding to create `~/.hermes/config.yaml`:
 
 ```bash
-export TELEGRAM_BOT_TOKEN="<your-token>"
+npx hermes onboard
 ```
 
-3. Edit `hermes.config.yaml` (agents and whitelist):
+You can rerun the same command at any time to update the config. During onboarding, Hermes scans your `PATH` for supported ACP agents and auto-configures any that are already installed:
+
+- `kimi acp`
+- `codex-acp`
+- `claude-code-acp` / `claude-agent-acp`
+
+3. Edit `~/.hermes/config.yaml` if you need advanced changes:
 
 - `security.allowedChatIds`: e.g. `telegram:123456789`
 - `security.allowedUserIds`: e.g. `telegram:987654321`
+- `telegram.token`: Telegram bot token
 - `tools.approvalMode`: `auto` or `manual` (`manual` uses Telegram action buttons for approval)
-- `agents`: command/args/cwd/env for ACP agents
+- `agents`: command/args/cwd/env for ACP agents. Onboarding auto-generates detected agents with `cwd: .`.
 - `agents[].mcpServers`: optional MCP server list passed to `session/new`
 
 4. Start Hermes:
 
 ```bash
-npm run dev
+npx hermes
 ```
 
 ## Chat Commands
@@ -69,6 +76,7 @@ npm test
 ## Project Structure
 
 - `src/main.ts` app entrypoint
+- `src/cli.ts` CLI entrypoint (`npx hermes`, `npx hermes onboard`)
 - `src/config/*` config schema + loader
 - `src/core/acp/*` ACP connection and agent process manager
 - `src/core/orchestrator/*` command + prompt orchestration
