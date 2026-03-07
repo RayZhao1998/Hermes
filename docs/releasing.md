@@ -9,11 +9,23 @@ If the package name is scoped, the same workflow can also publish to GitHub Pack
 
 ## One-time setup
 
-1. In GitHub, open `Settings -> Secrets and variables -> Actions`.
-2. Add a repository secret named `NPM_TOKEN`.
-3. Create the token in npm with publish permission for the target package scope.
+Configure npm Trusted Publishing for the package on npmjs.com:
 
-`GITHUB_TOKEN` is provided automatically by GitHub Actions, so you do not need to create a second secret for Releases or GitHub Packages.
+1. Open the package settings on npmjs.com and find `Trusted publishing`.
+2. Add a `GitHub Actions` trusted publisher with:
+   - Organization or user: your GitHub owner
+   - Repository: your GitHub repository
+   - Workflow filename: `release.yml`
+   - Environment name: leave empty unless this workflow is later protected by a GitHub environment
+3. Make sure the values match GitHub exactly, including letter case and the `.yml` suffix.
+
+For this repository, the expected GitHub Actions trusted publisher values are:
+
+- Organization or user: `RayZhao1998`
+- Repository: `Hermes`
+- Workflow filename: `release.yml`
+
+`GITHUB_TOKEN` is provided automatically by GitHub Actions, so you do not need to create additional secrets for npm publish, GitHub Releases, or GitHub Packages.
 
 ## Package naming
 
@@ -41,13 +53,14 @@ The release workflow then:
 2. Runs `npm run build`
 3. Runs `npm test`
 4. Verifies that the Git tag version matches `package.json`
-5. Publishes to npm with provenance
+5. Publishes to npm via GitHub Actions OIDC trusted publishing
 6. Publishes to GitHub Packages only if the package name is scoped
 7. Creates a GitHub Release with generated notes
 
 ## Notes
 
 - The workflow will fail if the tag version and `package.json` version do not match.
-- The workflow will fail if `NPM_TOKEN` is missing or does not have access to the configured npm scope.
+- Trusted publishing requires a GitHub-hosted runner plus npm CLI `11.5.1+` and Node `22.14.0+`; the workflow uses Node 24 to satisfy this requirement.
+- npm generates provenance automatically when trusted publishing is used from a public GitHub repository, so the workflow does not need a separate npm token or `--provenance` flag.
 - The published npm tarball is restricted by the `files` field in `package.json`, so only the built CLI output and README are shipped.
 - If you later want GitHub Packages, rename the package to a scoped name before publishing the first version there.
