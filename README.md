@@ -1,95 +1,153 @@
 # Hermes
 
-Hermes is an ACP client gateway that exposes ACP-compatible coding agents to chat platforms.
+Hermes is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) gateway that brings ACP-compatible coding agents into chat applications.
 
-Telegram transport is powered by Vercel Chat SDK (`chat` + `@chat-adapter/telegram`) in polling mode. V2 is prepared with a Discord adapter interface placeholder.
+It uses the [Chat SDK](https://chat-sdk.dev/) for chat-platform transport and keeps the agent side protocol-native, so the same Hermes instance can front any agent that speaks ACP over `stdio`.
 
-## Features
+Examples of compatible agents include:
 
-- ACP transport over `stdio` only.
-- Telegram bot transport via Chat SDK polling.
-- Chat-scoped Telegram slash commands merged with ACP `available_commands_update`.
-- One persistent process per configured agent.
-- Manual session creation via `/new` only.
-- Configurable tool approval for `session/request_permission`.
-- Whitelist-based access control (`allowedChatIds` or `allowedUserIds`).
-- In-memory chat state (no persistence).
+- [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+- [codex-acp](https://github.com/zed-industries/codex-acp)
+- [claude-code-acp / claude-agent-acp](https://github.com/zed-industries/claude-agent-acp)
 
-## Requirements
+## Why Hermes
 
-- Node.js 20+
+- Run ACP agents from chat instead of a terminal.
+- Keep one persistent process per configured agent.
+- Create chat-scoped sessions on demand with `/new`.
+- Merge built-in Hermes commands with agent-published ACP commands.
+- Handle `session/request_permission` in either `auto` or `manual` mode.
+- Restrict access with `allowedChatIds` and `allowedUserIds`.
+
+Current ACP transport support is `stdio` only. Chat state is currently in-memory.
+
+## Chat App Support
+
+| Platform | Status | Current support |
+| --- | --- | --- |
+| Telegram | Available now | Implemented with Chat SDK polling via `@chat-adapter/telegram`. Supports inbound messages, outbound send/edit, built-in command registration, namespaced ACP commands, and manual tool approval via action buttons. |
+| Discord | TODO | The channel abstraction and `DiscordAdapter` placeholder already exist, but gateway events, sending/editing messages, config, and runtime wiring are not implemented yet. The current release starts Telegram only. |
+
+### Telegram details
+
+- Bot transport runs in polling mode.
+- Hermes syncs built-in commands such as `/agents`, `/agent`, `/new`, `/models`, `/model`, `/status`, and `/cancel`.
+- ACP commands are namespaced as `/<agent-id>:<command>` to avoid collisions.
+- When Telegram command naming rules require it, Hermes publishes a `__` alias such as `/codex__logout` for `/codex:logout`.
+- Manual tool approval uses Telegram action buttons.
+
+### Discord status
+
+- `src/adapters/discord/DiscordAdapter.ts` is a placeholder only.
+- `ChannelAdapter` and the orchestrator are already structured to support Discord cleanly.
+- See [docs/discord-v2.md](./docs/discord-v2.md) for the current implementation notes.
+
+## Installation
+
+Hermes requires Node.js 20 or later.
+
+Use Hermes either as a global CLI or directly with `npx`.
+
+```bash
+npm install -g hermes-gateway
+hermes onboard
+hermes
+```
+
+Or:
+
+```bash
+npx hermes-gateway@latest onboard
+npx hermes-gateway@latest
+```
 
 ## Setup
 
-1. Install dependencies:
+Hermes stores its config at `~/.hermes/config.yaml`.
+
+The onboarding command creates this file interactively and scans your `PATH` for known ACP agent commands, including `kimi`, `codex-acp`, `claude-code-acp`, and `claude-agent-acp`.
+
+Example config:
+
+```yaml
+app:
+  logLevel: info
+
+security:
+  allowedChatIds:
+    - telegram:123456789
+  allowedUserIds: []
+
+telegram:
+  enabled: true
+  tokenEnv: TELEGRAM_BOT_TOKEN
+
+tools:
+  approvalMode: manual
+
+agents:
+  - id: kimi
+    command: kimi
+    args: ["acp"]
+    cwd: .
+    env: {}
+    mcpServers: []
+    default: true
+
+  - id: codex
+    command: codex-acp
+    args: []
+    cwd: .
+    env: {}
+    mcpServers: []
+```
+
+Recommended environment setup:
+
+```bash
+export TELEGRAM_BOT_TOKEN=your_bot_token
+```
+
+## Usage
+
+Start Hermes, then talk to your bot in Telegram and create a session with:
+
+```text
+/new
+```
+
+Useful commands:
+
+- `/agents` list configured agents and runtime status
+- `/agent <id>` switch the active agent for the current chat
+- `/new` create a new ACP session
+- `/models` list models exposed by the active session
+- `/model <id>` switch the active model
+- `/status` show the current agent, session, turn, and MCP servers
+- `/cancel` cancel the in-flight turn
+
+## Project Structure
+
+- `src/cli.ts`: CLI entrypoint
+- `src/main.ts`: app startup and runtime wiring
+- `src/config/`: config loading, schema validation, onboarding
+- `src/core/`: ACP client, process manager, orchestration, routing, security, state
+- `src/adapters/telegram/`: Telegram transport implementation
+- `src/adapters/discord/`: Discord placeholder for V2
+- `tests/unit/` and `tests/integration/`: automated test coverage
+- `tools/fake-acp-agent.ts`: fake ACP agent for integration tests
+
+## Development
 
 ```bash
 npm install
-```
-
-2. Run interactive onboarding to create `~/.hermes/config.yaml`:
-
-```bash
-npx hermes-gateway onboard
-```
-
-You can rerun the same command at any time to update the config. During onboarding, Hermes scans your `PATH` for supported ACP agents and auto-configures any that are already installed:
-
-- `kimi acp`
-- `codex-acp`
-- `claude-code-acp` / `claude-agent-acp`
-
-3. Edit `~/.hermes/config.yaml` if you need advanced changes:
-
-- `security.allowedChatIds`: e.g. `telegram:123456789`
-- `security.allowedUserIds`: e.g. `telegram:987654321`
-- `telegram.token`: Telegram bot token
-- `tools.approvalMode`: `auto` or `manual` (`manual` uses Telegram action buttons for approval)
-- `agents`: command/args/cwd/env for ACP agents. Onboarding auto-generates detected agents with `cwd: .`.
-- `agents[].mcpServers`: optional MCP server list passed to `session/new`
-
-4. Start Hermes:
-
-```bash
-npx hermes-gateway
-```
-
-## Chat Commands
-
-- `/agents` list configured agents and runtime status
-- `/agent <id>` switch active agent for current chat (resets session)
-- `/new` create a new ACP session
-- `/models` list selectable models for the active ACP session, if the agent exposes them
-- `/model <id>` set the model for the active ACP session
-- `/status` show current agent/session/turn state, including configured MCP servers
-- `/cancel` cancel in-flight prompt turn
-- ACP slash commands published by the active session are namespaced as `/<agent-id>:<command>` to avoid collisions with Hermes commands, and Hermes rewrites them back to the raw `/<command> ...` prompt before sending them to the agent.
-- Telegram command registration uses a `__` alias for namespaced ACP commands when needed (for example, `/codex__logout` maps to `/codex:logout`).
-
-## Build and Test
-
-```bash
+npm run dev
 npm run build
 npm test
 ```
 
-## Release
+- `npm run dev` runs the CLI from source with `tsx`
+- `npm run build` compiles to `dist/`
+- `npm test` runs the Vitest suite
 
-The repository includes GitHub Actions for CI and release automation:
-
-- `.github/workflows/ci.yml` runs `npm ci`, `npm run build`, and `npm test` on every push and pull request.
-- `.github/workflows/release.yml` publishes to npm, creates a GitHub Release, and publishes to GitHub Packages only when the package name is scoped.
-
-See [docs/releasing.md](./docs/releasing.md) for the required GitHub secrets and the exact release flow.
-
-## Project Structure
-
-- `src/main.ts` app entrypoint
-- `src/cli.ts` CLI entrypoint (`npx hermes-gateway`, `npx hermes-gateway onboard`)
-- `src/config/*` config schema + loader
-- `src/core/acp/*` ACP connection and agent process manager
-- `src/core/orchestrator/*` command + prompt orchestration
-- `src/adapters/telegram/*` Telegram adapter backed by Chat SDK
-- `src/adapters/discord/*` Discord placeholder (V2)
-- `tools/fake-acp-agent.ts` ACP fake agent for integration tests
-- `tests/*` unit and integration tests
+See [docs/releasing.md](./docs/releasing.md) for release workflow details.
