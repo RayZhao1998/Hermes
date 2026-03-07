@@ -18,40 +18,40 @@ function message(overrides: Partial<MessageEnvelope>): MessageEnvelope {
 describe("isAuthorizedMessage", () => {
   it("allows matching chat whitelist", () => {
     const allowed = isAuthorizedMessage(message({}), {
-      allowedChatIds: ["telegram:100"],
-      allowedUserIds: [],
+      allowChats: ["telegram:100"],
+      allowUsers: [],
     });
     expect(allowed).toBe(true);
   });
 
   it("also allows unscoped chat id for compatibility", () => {
     const allowed = isAuthorizedMessage(message({}), {
-      allowedChatIds: ["100"],
-      allowedUserIds: [],
+      allowChats: ["100"],
+      allowUsers: [],
     });
     expect(allowed).toBe(true);
   });
 
   it("allows matching user whitelist", () => {
     const allowed = isAuthorizedMessage(message({}), {
-      allowedChatIds: [],
-      allowedUserIds: ["telegram:200"],
+      allowChats: [],
+      allowUsers: ["telegram:200"],
     });
     expect(allowed).toBe(true);
   });
 
   it("also allows unscoped user id for compatibility", () => {
     const allowed = isAuthorizedMessage(message({}), {
-      allowedChatIds: [],
-      allowedUserIds: ["200"],
+      allowChats: [],
+      allowUsers: ["200"],
     });
     expect(allowed).toBe(true);
   });
 
   it("rejects non-whitelisted messages", () => {
     const allowed = isAuthorizedMessage(message({}), {
-      allowedChatIds: ["telegram:999"],
-      allowedUserIds: ["telegram:888"],
+      allowChats: ["telegram:999"],
+      allowUsers: ["telegram:888"],
     });
     expect(allowed).toBe(false);
   });

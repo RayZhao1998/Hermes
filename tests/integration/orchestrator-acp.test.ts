@@ -158,8 +158,8 @@ describe("ChatOrchestrator + ACP integration", () => {
       router: new CommandRouter(),
       agentManager: manager,
       accessControl: {
-        allowedChatIds: ["telegram:1001"],
-        allowedUserIds: [],
+        allowChats: ["telegram:1001"],
+        allowUsers: [],
       },
       outputMode,
       toolApprovalMode,
@@ -183,24 +183,23 @@ describe("ChatOrchestrator + ACP integration", () => {
           args: [tsxCli, fakeAgent],
           cwd: process.cwd(),
           env: {},
-          mcpServers: [
-            {
-              name: "filesystem",
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-filesystem", process.cwd()],
-              env: [],
-            },
-            {
-              type: "http",
-              name: "docs",
-              url: "https://mcp.example.com",
-              headers: [],
-            },
-          ],
-          default: true,
         },
       ],
       "fake",
+      [
+        {
+          name: "filesystem",
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-filesystem", process.cwd()],
+          env: [],
+        },
+        {
+          type: "http",
+          name: "docs",
+          url: "https://mcp.example.com",
+          headers: [],
+        },
+      ],
       logger,
     );
 

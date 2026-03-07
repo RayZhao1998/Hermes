@@ -1,45 +1,55 @@
 import "dotenv/config";
 import pino from "pino";
-import { loadConfig } from "./config/load.js";
 import { TelegramAdapter } from "./adapters/telegram/TelegramAdapter.js";
+import { loadConfig } from "./config/load.js";
+import type { LoadedBotConfig, LoadedProfileConfig } from "./config/schema.js";
 import { AgentProcessManager } from "./core/acp/AgentProcessManager.js";
-import { InMemoryChatStateStore } from "./core/state/InMemoryChatStateStore.js";
-import { CommandRouter } from "./core/router/CommandRouter.js";
 import { ChatOrchestrator } from "./core/orchestrator/ChatOrchestrator.js";
+import { CommandRouter } from "./core/router/CommandRouter.js";
+import { InMemoryChatStateStore } from "./core/state/InMemoryChatStateStore.js";
 
 interface StartHermesOptions {
   configPath?: string;
 }
 
+function createAgentManager(profile: LoadedProfileConfig, logger: pino.Logger): AgentProcessManager {
+  return new AgentProcessManager(
+    profile.agents,
+    profile.defaultAgentId,
+    profile.mcpServers,
+    logger.child({ component: "acp", profileId: profile.id }),
+  );
+}
+
+function createChannel(bot: LoadedBotConfig, logger: pino.Logger) {
+  switch (bot.channel) {
+    case "telegram":
+      return new TelegramAdapter(bot.adapter.token, logger.child({ component: "telegram", botId: bot.id }));
+    case "discord":
+      throw new Error(`Discord bot '${bot.id}' is not implemented yet.`);
+  }
+}
+
 export async function startHermes(options: StartHermesOptions = {}): Promise<void> {
   const config = await loadConfig(options.configPath);
-
   const logger = pino({ level: config.app.logLevel });
 
-  if (!config.telegram.enabled) {
-    throw new Error("Telegram must be enabled.");
+  const enabledBots = config.bots.filter((bot) => bot.enabled);
+  if (enabledBots.length === 0) {
+    throw new Error(`No enabled bots configured (${config.configPath}).`);
   }
 
-  const channel = new TelegramAdapter(config.telegram.token, logger.child({ component: "telegram" }));
-  const stateStore = new InMemoryChatStateStore();
-  const commandRouter = new CommandRouter();
-  const agentManager = new AgentProcessManager(config.agents, config.defaultAgentId, logger.child({ component: "acp" }));
-
-  const orchestrator = new ChatOrchestrator({
-    channel,
-    stateStore,
-    router: commandRouter,
-    agentManager,
-    accessControl: config.security,
-    outputMode: config.app.outputMode,
-    toolApprovalMode: config.tools.approvalMode,
-    logger: logger.child({ component: "orchestrator" }),
-  });
+  const managers = new Map<string, AgentProcessManager>();
+  const orchestrators: ChatOrchestrator[] = [];
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "Shutting down Hermes");
-    await orchestrator.stop();
-    await agentManager.stopAll();
+    await Promise.allSettled(orchestrators.map(async (orchestrator) => {
+      await orchestrator.stop();
+    }));
+    await Promise.allSettled(Array.from(managers.values()).map(async (manager) => {
+      await manager.stopAll();
+    }));
     process.exit(0);
   };
 
@@ -50,6 +60,39 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
     void shutdown("SIGTERM");
   });
 
-  await orchestrator.start();
-  logger.info("Hermes started");
+  try {
+    for (const bot of enabledBots) {
+      let manager = managers.get(bot.profileId);
+      if (!manager) {
+        manager = createAgentManager(bot.profile, logger);
+        managers.set(bot.profileId, manager);
+      }
+
+      const channel = createChannel(bot, logger);
+      const orchestrator = new ChatOrchestrator({
+        channel,
+        stateStore: new InMemoryChatStateStore(),
+        router: new CommandRouter(),
+        agentManager: manager,
+        accessControl: bot.access,
+        outputMode: bot.profile.outputMode,
+        toolApprovalMode: bot.profile.tools.approvalMode,
+        logger: logger.child({ component: "orchestrator", botId: bot.id, profileId: bot.profileId }),
+      });
+
+      await orchestrator.start();
+      orchestrators.push(orchestrator);
+      logger.info({ botId: bot.id, channel: bot.channel, profileId: bot.profileId }, "Bot started");
+    }
+  } catch (error) {
+    await Promise.allSettled(orchestrators.map(async (orchestrator) => {
+      await orchestrator.stop();
+    }));
+    await Promise.allSettled(Array.from(managers.values()).map(async (manager) => {
+      await manager.stopAll();
+    }));
+    throw error;
+  }
+
+  logger.info({ botIds: enabledBots.map((bot) => bot.id) }, "Hermes started");
 }

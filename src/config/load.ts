@@ -1,30 +1,83 @@
 import { access, mkdir, readFile } from "node:fs/promises";
 import YAML from "yaml";
 import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
-import { type HermesConfig, type LoadedHermesConfig, hermesConfigSchema } from "./schema.js";
+import {
+  type AgentConfig,
+  type HermesConfig,
+  type LoadedAgentConfig,
+  type LoadedBotConfig,
+  type LoadedHermesConfig,
+  type LoadedProfileConfig,
+  hermesConfigSchema,
+} from "./schema.js";
 
-function pickDefaultAgentId(agents: Array<{ id: string; default?: boolean }>): string {
-  const explicit = agents.find((agent) => agent.default);
-  return explicit?.id ?? agents[0].id;
+function indexById<T extends { id: string }>(items: T[]): Map<string, T> {
+  return new Map(items.map((item) => [item.id, item]));
 }
 
-function resolveTelegramToken(config: HermesConfig, configPath: string): string {
-  if (!config.telegram.enabled) {
-    return "";
-  }
-
-  if (!config.telegram.token) {
-    throw new Error(`Missing Telegram token in config (${configPath})`);
-  }
-  return config.telegram.token;
+function indexByName<T extends { name: string }>(items: T[]): Map<string, T> {
+  return new Map(items.map((item) => [item.name, item]));
 }
 
-function validateRuntimeConfig(config: HermesConfig, configPath: string): void {
-  if (config.app.outputMode !== "full" && config.tools.approvalMode !== "auto") {
-    throw new Error(
-      `Invalid config: app.outputMode=${config.app.outputMode} requires tools.approvalMode=auto (${configPath})`,
+function toLoadedAgents(agents: AgentConfig[], workspaceDir: string): LoadedAgentConfig[] {
+  return agents.map((agent) => ({
+    ...agent,
+    cwd: workspaceDir,
+  }));
+}
+
+function resolveProfiles(config: HermesConfig, workspaceDir: string): LoadedProfileConfig[] {
+  const agentsById = indexById(config.agents);
+  const mcpServersByName = indexByName(config.mcpServers);
+
+  return config.profiles.map((profile) => {
+    const enabledAgentIds = profile.enabledAgentIds ?? config.agents.map((agent) => agent.id);
+    const agents = toLoadedAgents(
+      enabledAgentIds.map((agentId) => {
+        const agent = agentsById.get(agentId);
+        if (!agent) {
+          throw new Error(`Profile '${profile.id}' references unknown agent '${agentId}'.`);
+        }
+        return agent;
+      }),
+      workspaceDir,
     );
-  }
+
+    return {
+      id: profile.id,
+      defaultAgentId: profile.defaultAgentId,
+      outputMode: profile.outputMode,
+      tools: profile.tools,
+      agents,
+      mcpServers: profile.mcpServerNames.map((name) => {
+        const server = mcpServersByName.get(name);
+        if (!server) {
+          throw new Error(`Profile '${profile.id}' references unknown MCP server '${name}'.`);
+        }
+        return server;
+      }),
+    };
+  });
+}
+
+function resolveBots(config: HermesConfig, profiles: LoadedProfileConfig[]): LoadedBotConfig[] {
+  const profilesById = indexById(profiles);
+
+  return config.bots.map((bot) => {
+    const profile = profilesById.get(bot.profileId);
+    if (!profile) {
+      throw new Error(`Bot '${bot.id}' references unknown profile '${bot.profileId}'.`);
+    }
+
+    return {
+      ...bot,
+      access: {
+        allowChats: bot.access.allowChats,
+        allowUsers: bot.access.allowUsers,
+      },
+      profile,
+    };
+  });
 }
 
 export async function configExists(configPath = getHermesConfigPath()): Promise<boolean> {
@@ -46,25 +99,16 @@ export async function loadConfig(
   configPath = getHermesConfigPath(),
 ): Promise<LoadedHermesConfig> {
   const parsed = await readConfigSource(configPath);
-  validateRuntimeConfig(parsed, configPath);
-  const token = resolveTelegramToken(parsed, configPath);
   const workspaceDir = getHermesWorkspaceDir();
   await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
-  const agents = parsed.agents.map((agent) => ({
-    ...agent,
-    cwd: workspaceDir,
-  }));
+
+  const profiles = resolveProfiles(parsed, workspaceDir);
+  const bots = resolveBots(parsed, profiles);
 
   return {
     app: parsed.app,
-    security: parsed.security,
-    telegram: {
-      enabled: parsed.telegram.enabled,
-      token,
-    },
-    tools: parsed.tools,
-    agents,
-    defaultAgentId: pickDefaultAgentId(agents),
+    profiles,
+    bots,
     configPath,
   };
 }

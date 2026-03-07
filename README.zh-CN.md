@@ -21,7 +21,7 @@ Hermes 会把兼容 ACP 的 agent 变成一个类似 OpenClaw 的个人助理，
 - 通过 `/new` 按聊天会话创建独立 session。
 - 合并 Hermes 内置命令和 agent 发布的 ACP 命令。
 - 支持 `session/request_permission` 的 `auto` 和 `manual` 两种审批模式。
-- 通过 `allowedChatIds` 和 `allowedUserIds` 限制访问范围。
+- 通过每个 bot 下的 `access.allowChats` 和 `access.allowUsers` 限制访问范围。
 
 当前 ACP 传输层只支持 `stdio`。聊天状态当前保存在内存中。
 
@@ -65,11 +65,19 @@ npx hermes-gateway@latest
 
 如果 `~/.hermes/config.yaml` 还不存在，Hermes 会在首次运行时交互式创建它。
 
-当前生成的配置会把 Telegram bot token 直接写到 `telegram.token`。
+当前生成的配置会创建一个默认 profile 和一个 Telegram bot。Telegram bot token 放在 `bots[].adapter.token` 下。
 
 ## 配置
 
 Hermes 使用 `~/.hermes/workspace` 作为 agent 工作区。
+
+当前配置结构：
+
+- `agents` 只描述 ACP agent 进程本身，例如 `id`、`command`、`args` 和 `env`
+- `mcpServers` 描述可复用的 MCP server 定义，通过 `name` 引用
+- `profiles` 描述可复用的运行配置，例如 `defaultAgentId`、启用的 agent、MCP server、输出模式和工具审批模式
+- `bots` 描述实际接入的聊天 bot 实例，包括 `channel`、`profileId`、bot 自己的 `access` 和适配器凭据
+- Hermes 总是让 agent 运行在 `~/.hermes/workspace` 中，因此 `cwd` 不属于 agent 配置的一部分
 
 如果你已经在使用 OpenClaw，可以直接把 `~/.openclaw/workspace` 中的所有内容复制到 `~/.hermes/workspace`，继续沿用原有的指令文件、记忆文件和其他辅助资产。
 

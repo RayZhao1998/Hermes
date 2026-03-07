@@ -30,6 +30,7 @@ export class AgentProcessManager {
   constructor(
     agents: LoadedAgentConfig[],
     private readonly defaultAgentId: string,
+    private readonly mcpServers: McpServer[],
     private readonly logger: Logger,
   ) {
     for (const config of agents) {
@@ -60,8 +61,8 @@ export class AgentProcessManager {
   }
 
   getAgentMcpServers(agentId: string): McpServer[] {
-    const record = this.requireRecord(agentId);
-    return record.config.mcpServers;
+    this.requireRecord(agentId);
+    return this.mcpServers;
   }
 
   listAgents(): AgentRuntimeInfo[] {

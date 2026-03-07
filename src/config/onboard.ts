@@ -12,7 +12,14 @@ import {
   text,
 } from "@clack/prompts";
 import YAML from "yaml";
-import type { AgentConfig, HermesConfig, LogLevel, OutputMode, ToolApprovalMode } from "./schema.js";
+import type {
+  AgentConfig,
+  HermesConfig,
+  LogLevel,
+  OutputMode,
+  ProfileConfig,
+  ToolApprovalMode,
+} from "./schema.js";
 import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
 import { readConfigSource } from "./load.js";
 
@@ -38,6 +45,9 @@ interface DetectedSupportedAgent {
   binaryPath: string;
   label: string;
 }
+
+const DEFAULT_PROFILE_ID = "default";
+const DEFAULT_BOT_ID = "telegram-main";
 
 const SUPPORTED_AGENT_DEFINITIONS: SupportedAgentDefinition[] = [
   {
@@ -171,9 +181,6 @@ function mergeWithExistingAgent(detected: AgentConfig, existing: AgentConfig | u
     ...detected,
     id: existing?.id ?? detected.id,
     env: existing?.env ?? {},
-    mcpServers: existing?.mcpServers ?? [],
-    default: existing?.default,
-    cwd: getHermesWorkspaceDir(),
   };
 }
 
@@ -200,6 +207,32 @@ async function maybeReadExistingConfig(configPath: string): Promise<ExistingConf
   }
 }
 
+function getExistingTelegramBot(config: ExistingConfig) {
+  return config?.bots.find((bot) => bot.channel === "telegram");
+}
+
+function getExistingProfile(config: ExistingConfig, profileId: string | undefined): ProfileConfig | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  if (profileId) {
+    return config.profiles.find((profile) => profile.id === profileId);
+  }
+
+  return config.profiles[0];
+}
+
+function assertSupportedExistingConfig(config: ExistingConfig): void {
+  if (!config) {
+    return;
+  }
+
+  if (config.profiles.length > 1 || config.bots.length > 1) {
+    throw new Error("Onboarding only supports a single profile and a single bot. Edit config.yaml manually.");
+  }
+}
+
 export async function detectSupportedAgents(existingAgents: AgentConfig[] = []): Promise<DetectedSupportedAgent[]> {
   const detectedAgents: DetectedSupportedAgent[] = [];
   for (const definition of SUPPORTED_AGENT_DEFINITIONS) {
@@ -215,9 +248,7 @@ export async function detectSupportedAgents(existingAgents: AgentConfig[] = []):
           id: definition.id,
           command: candidate.command,
           args: candidate.args,
-          cwd: ".",
           env: {},
-          mcpServers: [],
         },
         existing,
       );
@@ -299,10 +330,7 @@ async function promptManualAgent(existingAgent: AgentConfig | undefined, reserve
     id,
     command,
     args: parseStringArray(argsInput, "Agent args"),
-    cwd: getHermesWorkspaceDir(),
     env: parseStringRecord(envInput, "Agent env"),
-    mcpServers: existingAgent?.mcpServers ?? [],
-    default: existingAgent?.default,
   };
 }
 
@@ -344,35 +372,52 @@ function pickDefaultAgentId(agents: AgentConfig[], existingDefaultAgentId: strin
 }
 
 function buildConfig(params: {
-  allowedChatIds: string[];
-  allowedUserIds: string[];
+  allowChats: string[];
+  allowUsers: string[];
   agents: AgentConfig[];
   defaultAgentId: string;
   logLevel: LogLevel;
   outputMode: OutputMode;
+  profileId: string;
+  botId: string;
   telegramToken: string;
   toolApprovalMode: ToolApprovalMode;
+  mcpServers: HermesConfig["mcpServers"];
 }): HermesConfig {
   return {
     app: {
       logLevel: params.logLevel,
-      outputMode: params.outputMode,
     },
-    security: {
-      allowedChatIds: params.allowedChatIds,
-      allowedUserIds: params.allowedUserIds,
-    },
-    telegram: {
-      enabled: true,
-      token: params.telegramToken,
-    },
-    tools: {
-      approvalMode: params.toolApprovalMode,
-    },
-    agents: params.agents.map((agent) => ({
-      ...agent,
-      default: agent.id === params.defaultAgentId ? true : undefined,
-    })),
+    agents: params.agents,
+    mcpServers: params.mcpServers,
+    profiles: [
+      {
+        id: params.profileId,
+        defaultAgentId: params.defaultAgentId,
+        enabledAgentIds: params.agents.map((agent) => agent.id),
+        mcpServerNames: params.mcpServers.map((server) => server.name),
+        outputMode: params.outputMode,
+        tools: {
+          approvalMode: params.toolApprovalMode,
+        },
+      },
+    ],
+    bots: [
+      {
+        id: params.botId,
+        channel: "telegram",
+        profileId: params.profileId,
+        enabled: true,
+        access: {
+          allowChats: params.allowChats,
+          allowUsers: params.allowUsers,
+        },
+        adapter: {
+          token: params.telegramToken,
+          mode: "polling",
+        },
+      },
+    ],
   };
 }
 
@@ -381,7 +426,6 @@ async function writeConfigFile(configPath: string, config: HermesConfig): Promis
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await writeFile(configPath, YAML.stringify(config, { lineWidth: 0 }), { encoding: "utf8", mode: 0o600 });
 
-  // Best effort: tighten permissions for secrets on Unix-like systems.
   await Promise.all([
     chmod(configDir, 0o700).catch(() => undefined),
     chmod(configPath, 0o600).catch(() => undefined),
@@ -392,8 +436,13 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   const configPath = options.configPath ?? getHermesConfigPath();
   const workspaceDir = getHermesWorkspaceDir();
   const existing = await maybeReadExistingConfig(configPath);
-  const existingToken = existing?.telegram.token ?? "";
-  const existingDefaultAgentId = existing?.agents.find((agent) => agent.default)?.id;
+  assertSupportedExistingConfig(existing);
+
+  const existingBot = getExistingTelegramBot(existing) ?? existing?.bots[0];
+  const existingProfile = getExistingProfile(existing, existingBot?.profileId);
+  const existingToken = existingBot?.channel === "telegram" ? existingBot.adapter.token : "";
+  const existingProfileId = existingProfile?.id ?? DEFAULT_PROFILE_ID;
+  const existingBotId = existingBot?.id ?? DEFAULT_BOT_ID;
 
   const { agents, detectedAgents } = await resolveOnboardingAgents(existing?.agents ?? []);
 
@@ -402,7 +451,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
     [
       `Config path: ${configPath}`,
       `Agent workspace: ${workspaceDir}`,
-      "This flow sets up Telegram, access control, and ACP agents.",
+      "This flow sets up one Telegram bot, one profile, and ACP agents.",
       "Agent working directory is fixed to the Hermes workspace.",
     ].join("\n"),
     "Setup",
@@ -426,7 +475,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   const allowedChatIdsInput = unwrapPrompt(
     await text({
       message: "Allowed chat IDs (comma or newline separated)",
-      initialValue: (existing?.security.allowedChatIds ?? []).join(", "),
+      initialValue: (existingBot?.access.allowChats ?? []).join(", "),
       placeholder: "telegram:123456789",
     }),
   );
@@ -434,7 +483,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   const allowedUserIdsInput = unwrapPrompt(
     await text({
       message: "Allowed user IDs (comma or newline separated)",
-      initialValue: (existing?.security.allowedUserIds ?? []).join(", "),
+      initialValue: (existingBot?.access.allowUsers ?? []).join(", "),
       placeholder: "telegram:987654321",
     }),
   );
@@ -457,7 +506,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   const toolApprovalMode = unwrapPrompt(
     await select<ToolApprovalMode>({
       message: "Tool approval mode",
-      initialValue: existing?.tools.approvalMode ?? "auto",
+      initialValue: existingProfile?.tools.approvalMode ?? "auto",
       options: [
         { value: "auto", label: "auto", hint: "approve tools automatically" },
         { value: "manual", label: "manual", hint: "approve tools in chat" },
@@ -466,9 +515,9 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   );
 
   const initialOutputMode =
-    toolApprovalMode === "manual" && existing?.app.outputMode !== "full"
+    toolApprovalMode === "manual" && existingProfile?.outputMode !== "full"
       ? "full"
-      : existing?.app.outputMode ?? "full";
+      : existingProfile?.outputMode ?? "full";
 
   const outputMode = unwrapPrompt(
     await select<OutputMode>({
@@ -492,7 +541,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
       : unwrapPrompt(
           await select<string>({
             message: "Default agent",
-            initialValue: pickDefaultAgentId(agents, existingDefaultAgentId),
+            initialValue: pickDefaultAgentId(agents, existingProfile?.defaultAgentId),
             options: agents.map((agent) => ({
               value: agent.id,
               label: agent.id,
@@ -502,14 +551,17 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
         );
 
   const config = buildConfig({
-    allowedChatIds: parseList(allowedChatIdsInput),
-    allowedUserIds: parseList(allowedUserIdsInput),
+    allowChats: parseList(allowedChatIdsInput),
+    allowUsers: parseList(allowedUserIdsInput),
     agents,
     defaultAgentId,
     logLevel,
     outputMode,
+    profileId: existingProfileId,
+    botId: existingBotId,
     telegramToken,
     toolApprovalMode,
+    mcpServers: existing?.mcpServers ?? [],
   });
 
   await writeConfigFile(configPath, config);

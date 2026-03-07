@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("config loading", () => {
-  it("loads config and resolves default agent", async () => {
+  it("loads config and resolves profiles and bots", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
     const configPath = path.join(dir, "hermes.config.yaml");
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
@@ -22,32 +22,26 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\n  outputMode: text_only\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  token: abc\ntools:\n  approvalMode: auto\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
+      `app:\n  logLevel: info\nagents:\n  - id: a\n    command: echo\n    args: ["ok"]\n    env: {}\n  - id: b\n    command: printf\n    args: []\n    env: {}\nmcpServers:\n  - name: filesystem\n    command: npx\n    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]\n    env:\n      - name: NODE_ENV\n        value: test\n  - type: http\n    name: docs\n    url: https://mcp.example.com\n    headers:\n      - name: Authorization\n        value: Bearer token\nprofiles:\n  - id: personal\n    defaultAgentId: a\n    enabledAgentIds: [a]\n    mcpServerNames: [filesystem, docs]\n    outputMode: text_only\n    tools:\n      approvalMode: auto\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: personal\n    access:\n      allowChats: ["telegram:1"]\n      allowUsers: ["telegram:2"]\n    adapter:\n      token: abc\n      mode: polling\n`,
       "utf8",
     );
 
     const loaded = await loadConfig(configPath);
     const workspaceDir = getHermesWorkspaceDir(homeDir);
-    expect(loaded.defaultAgentId).toBe("a");
-    expect(loaded.agents[0]?.cwd).toBe(workspaceDir);
+
+    expect(loaded.profiles).toHaveLength(1);
+    expect(loaded.bots).toHaveLength(1);
+    expect(loaded.profiles[0]?.defaultAgentId).toBe("a");
+    expect(loaded.profiles[0]?.agents[0]?.cwd).toBe(workspaceDir);
+    expect(loaded.profiles[0]?.outputMode).toBe("text_only");
+    expect(loaded.profiles[0]?.mcpServers).toHaveLength(2);
+    expect(loaded.bots[0]?.channel).toBe("telegram");
+    expect(loaded.bots[0]?.profile.id).toBe("personal");
+    expect(loaded.bots[0]?.access).toEqual({
+      allowChats: ["telegram:1"],
+      allowUsers: ["telegram:2"],
+    });
     await expect(access(workspaceDir)).resolves.toBeUndefined();
-    expect(loaded.telegram.token).toBe("abc");
-    expect(loaded.app.outputMode).toBe("text_only");
-    expect(loaded.tools.approvalMode).toBe("auto");
-    expect(loaded.agents[0]?.mcpServers).toEqual([
-      {
-        name: "filesystem",
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
-        env: [{ name: "NODE_ENV", value: "test" }],
-      },
-      {
-        type: "http",
-        name: "docs",
-        url: "https://mcp.example.com",
-        headers: [{ name: "Authorization", value: "Bearer token" }],
-      },
-    ]);
   });
 
   it("loads config from ~/.hermes/config.yaml by default", async () => {
@@ -59,44 +53,59 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `telegram:\n  enabled: true\n  token: from-config\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `agents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: default\n    adapter:\n      token: from-config\n`,
       "utf8",
     );
 
     const loaded = await loadConfig();
     expect(loaded.configPath).toBe(configPath);
-    expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
-    expect(loaded.telegram.token).toBe("from-config");
+    expect(loaded.bots[0]?.channel).toBe("telegram");
+    expect(loaded.bots[0]?.profile.defaultAgentId).toBe("a");
   });
 
-  it("ignores configured agent cwd and uses the Hermes workspace", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
-    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
-    const configPath = path.join(dir, "config.yaml");
-
-    process.env.HOME = homeDir;
-
-    await writeFile(
-      configPath,
-      `telegram:\n  enabled: true\n  token: abc\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: /tmp/legacy-project\n    env: {}\n`,
-      "utf8",
-    );
-
-    const loaded = await loadConfig(configPath);
-    expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
-  });
-
-  it("throws when telegram token is missing", async () => {
+  it("rejects the old top-level config shape", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
     const configPath = path.join(dir, "config.yaml");
 
     await writeFile(
       configPath,
-      `telegram:\n  enabled: true\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `telegram:\n  enabled: true\n  token: abc\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntools:\n  approvalMode: auto\ndefaultAgentId: a\nagents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: default\n    adapter:\n      token: abc\n`,
       "utf8",
     );
 
-    await expect(loadConfig(configPath)).rejects.toThrow("Telegram token must be configured");
+    await expect(loadConfig(configPath)).rejects.toThrow("Unrecognized");
+  });
+
+  it("rejects profiles that reference unknown agents", () => {
+    expect(() =>
+      hermesConfigSchema.parse({
+        agents: [
+          { id: "a", command: "echo", args: [], env: {} },
+        ],
+        profiles: [
+          { id: "default", defaultAgentId: "missing" },
+        ],
+        bots: [
+          { id: "tg-main", channel: "telegram", profileId: "default", adapter: { token: "abc" } },
+        ],
+      }),
+    ).toThrow("references unknown agent");
+  });
+
+  it("rejects bots that reference unknown profiles", () => {
+    expect(() =>
+      hermesConfigSchema.parse({
+        agents: [
+          { id: "a", command: "echo", args: [], env: {} },
+        ],
+        profiles: [
+          { id: "default", defaultAgentId: "a" },
+        ],
+        bots: [
+          { id: "tg-main", channel: "telegram", profileId: "missing", adapter: { token: "abc" } },
+        ],
+      }),
+    ).toThrow("references unknown profile");
   });
 
   it("rejects non-full output modes when tool approval mode is manual", async () => {
@@ -105,57 +114,33 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  outputMode: last_text\ntelegram:\n  enabled: true\n  token: abc\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `agents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\n    outputMode: last_text\n    tools:\n      approvalMode: manual\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: default\n    adapter:\n      token: abc\n`,
       "utf8",
     );
 
     await expect(loadConfig(configPath)).rejects.toThrow(
-      "Invalid config: app.outputMode=last_text requires tools.approvalMode=auto",
+      "requires outputMode=full when tools.approvalMode=manual",
     );
   });
 
-  it("rejects duplicate agent ids", () => {
-    expect(() =>
-      hermesConfigSchema.parse({
-        telegram: { enabled: true, token: "TG" },
-        agents: [
-          { id: "a", command: "echo", args: [], cwd: ".", env: {} },
-          { id: "a", command: "echo", args: [], cwd: ".", env: {} },
-        ],
-      }),
-    ).toThrow("Duplicate agent id");
-  });
-
-  it("defaults tool approval mode to auto", () => {
+  it("defaults profile and bot options", () => {
     const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, token: "TG" },
       agents: [
-        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+        { id: "a", command: "echo", args: [], env: {} },
+      ],
+      profiles: [
+        { id: "default", defaultAgentId: "a" },
+      ],
+      bots: [
+        { id: "tg-main", channel: "telegram", profileId: "default", adapter: { token: "abc" } },
       ],
     });
 
-    expect(parsed.tools.approvalMode).toBe("auto");
-  });
-
-  it("defaults output mode to full", () => {
-    const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, token: "TG" },
-      agents: [
-        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
-      ],
-    });
-
-    expect(parsed.app.outputMode).toBe("full");
-  });
-
-  it("defaults agent MCP servers to an empty list", () => {
-    const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, token: "TG" },
-      agents: [
-        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
-      ],
-    });
-
-    expect(parsed.agents[0]?.mcpServers).toEqual([]);
+    expect(parsed.app.logLevel).toBe("info");
+    expect(parsed.mcpServers).toEqual([]);
+    expect(parsed.profiles[0]?.outputMode).toBe("full");
+    expect(parsed.profiles[0]?.tools.approvalMode).toBe("auto");
+    expect(parsed.bots[0]?.enabled).toBe(true);
+    expect(parsed.bots[0]?.access).toEqual({ allowChats: [], allowUsers: [] });
   });
 });

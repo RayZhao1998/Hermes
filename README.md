@@ -21,7 +21,7 @@ Examples of compatible agents include:
 - Create chat-scoped sessions on demand with `/new`.
 - Merge built-in Hermes commands with agent-published ACP commands.
 - Handle `session/request_permission` in either `auto` or `manual` mode.
-- Restrict access with `allowedChatIds` and `allowedUserIds`.
+- Restrict access per bot with `access.allowChats` and `access.allowUsers`.
 
 Current ACP transport support is `stdio` only. Chat state is currently in-memory.
 
@@ -65,11 +65,19 @@ npx hermes-gateway@latest
 
 On first run, Hermes creates `~/.hermes/config.yaml` interactively if it does not exist yet.
 
-The generated config stores the Telegram bot token directly under `telegram.token`.
+The generated config creates one default profile and one Telegram bot. Telegram bot tokens live under `bots[].adapter.token`.
 
 ## Setup
 
 Hermes uses `~/.hermes/workspace` as its agent workspace.
+
+Config shape:
+
+- `agents` declares ACP agent processes such as `id`, `command`, `args`, and `env`
+- `mcpServers` declares reusable MCP server definitions by `name`
+- `profiles` declares reusable runtime behavior such as `defaultAgentId`, enabled agents, MCP servers, output mode, and tool approval
+- `bots` declares concrete chat bot instances with `channel`, `profileId`, bot-specific `access`, and adapter credentials
+- Hermes always runs agents inside `~/.hermes/workspace`, so `cwd` is not part of agent config
 
 If you already use OpenClaw, you can copy everything from `~/.openclaw/workspace` into `~/.hermes/workspace` and keep working with the same instructions, memory files, and supporting assets.
 

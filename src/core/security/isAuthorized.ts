@@ -1,8 +1,8 @@
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
 
 export interface AccessControlConfig {
-  allowedChatIds: string[];
-  allowedUserIds: string[];
+  allowChats: string[];
+  allowUsers: string[];
 }
 
 export function buildScopedId(platform: MessageEnvelope["platform"], id: string): string {
@@ -14,9 +14,9 @@ export function isAuthorizedMessage(message: MessageEnvelope, config: AccessCont
   const scopedUser = buildScopedId(message.platform, message.userId);
 
   return (
-    config.allowedChatIds.includes(scopedChat) ||
-    config.allowedChatIds.includes(message.chatId) ||
-    config.allowedUserIds.includes(scopedUser) ||
-    config.allowedUserIds.includes(message.userId)
+    config.allowChats.includes(scopedChat) ||
+    config.allowChats.includes(message.chatId) ||
+    config.allowUsers.includes(scopedUser) ||
+    config.allowUsers.includes(message.userId)
   );
 }
