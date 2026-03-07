@@ -32,6 +32,7 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
     router: commandRouter,
     agentManager,
     accessControl: config.security,
+    outputMode: config.app.outputMode,
     toolApprovalMode: config.tools.approvalMode,
     logger: logger.child({ component: "orchestrator" }),
   });

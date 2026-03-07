@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
 const logLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
+const outputModeSchema = z.enum(["full", "text_only", "last_text"]);
 const toolApprovalModeSchema = z.enum(["auto", "manual"]);
 const envVariableSchema = z.object({
   name: z.string().min(1),
@@ -55,8 +56,9 @@ export const hermesConfigSchema = z
     app: z
       .object({
         logLevel: logLevelSchema.default("info"),
+        outputMode: outputModeSchema.default("full"),
       })
-      .default({ logLevel: "info" }),
+      .default({ logLevel: "info", outputMode: "full" }),
     security: z
       .object({
         allowedChatIds: z.array(z.string()).default([]),
@@ -96,6 +98,7 @@ export const hermesConfigSchema = z
 export type HermesConfig = z.infer<typeof hermesConfigSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
+export type OutputMode = z.infer<typeof outputModeSchema>;
 export type ToolApprovalMode = z.infer<typeof toolApprovalModeSchema>;
 
 export interface LoadedAgentConfig extends AgentConfig {

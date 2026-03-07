@@ -1,7 +1,7 @@
 import path from "node:path";
 import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ToolApprovalMode } from "../../src/config/schema.js";
+import type { OutputMode, ToolApprovalMode } from "../../src/config/schema.js";
 import { AgentProcessManager } from "../../src/core/acp/AgentProcessManager.js";
 import type { ChannelAdapter, OutboundMessageHandle } from "../../src/core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js";
@@ -148,7 +148,10 @@ describe("ChatOrchestrator + ACP integration", () => {
   let orchestrator: ChatOrchestrator;
   let logger: Logger;
 
-  async function startOrchestrator(toolApprovalMode: ToolApprovalMode = "auto"): Promise<ChatOrchestrator> {
+  async function startOrchestrator(
+    toolApprovalMode: ToolApprovalMode = "auto",
+    outputMode: OutputMode = "full",
+  ): Promise<ChatOrchestrator> {
     const instance = new ChatOrchestrator({
       channel: adapter,
       stateStore: new InMemoryChatStateStore(),
@@ -158,6 +161,7 @@ describe("ChatOrchestrator + ACP integration", () => {
         allowedChatIds: ["telegram:1001"],
         allowedUserIds: [],
       },
+      outputMode,
       toolApprovalMode,
       logger,
     });
@@ -264,6 +268,45 @@ describe("ChatOrchestrator + ACP integration", () => {
     expect(merged).toContain("permission:allow");
     expect(merged).toContain("Write permission granted via: allow");
     expect(merged).toContain("Search complete for: hello hermes");
+  });
+
+  it("hides tool calls and only forwards agent text when output mode is text_only", async () => {
+    await orchestrator.stop();
+    orchestrator = await startOrchestrator("auto", "text_only");
+
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("hello hermes");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("permission:allow")));
+
+    const merged = adapter.messages.map((m) => m.text).join("\n");
+    expect(merged).toContain("Echo: hello hermes");
+    expect(merged).toContain("permission:allow");
+    expect(merged).not.toContain("[tool]");
+    expect(merged).not.toContain("Search complete for: hello hermes");
+    expect(merged).not.toContain("\"result\":\"ok\"");
+    expect(adapter.edits).toHaveLength(0);
+  });
+
+  it("only sends the final text for the current prompt turn when output mode is last_text", async () => {
+    await orchestrator.stop();
+    orchestrator = await startOrchestrator("auto", "last_text");
+
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("hello hermes");
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("permission:allow")));
+
+    expect(adapter.messages).toHaveLength(1);
+    expect(adapter.messages[0]?.text).toContain("Echo: hello hermes");
+    expect(adapter.messages[0]?.text).toContain("permission:allow");
+    expect(adapter.messages[0]?.text).toContain("done done done done");
+    expect(adapter.messages[0]?.text).not.toContain("[tool]");
+    expect(adapter.edits).toHaveLength(0);
   });
 
   it("cancels a pending manual permission request when /cancel is issued", async () => {

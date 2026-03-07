@@ -72,6 +72,7 @@ Example config:
 ```yaml
 app:
   logLevel: info
+  outputMode: full
 
 security:
   allowedChatIds:
@@ -101,6 +102,13 @@ agents:
     env: {}
     mcpServers: []
 ```
+
+`app.outputMode` supports:
+- `full`: stream agent text and tool call updates.
+- `text_only`: only send agent text output.
+- `last_text`: only send the final text content from the current prompt turn.
+
+When `app.outputMode` is `text_only` or `last_text`, `tools.approvalMode` must be `auto`.
 
 Recommended environment setup:
 

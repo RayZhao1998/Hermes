@@ -30,6 +30,14 @@ function resolveTelegramToken(config: HermesConfig, configPath: string): string 
   return token;
 }
 
+function validateRuntimeConfig(config: HermesConfig, configPath: string): void {
+  if (config.app.outputMode !== "full" && config.tools.approvalMode !== "auto") {
+    throw new Error(
+      `Invalid config: app.outputMode=${config.app.outputMode} requires tools.approvalMode=auto (${configPath})`,
+    );
+  }
+}
+
 export async function configExists(configPath = getHermesConfigPath()): Promise<boolean> {
   try {
     await access(configPath);
@@ -50,6 +58,7 @@ export async function loadConfig(
   runtimeCwd = process.cwd(),
 ): Promise<LoadedHermesConfig> {
   const parsed = await readConfigSource(configPath);
+  validateRuntimeConfig(parsed, configPath);
   const token = resolveTelegramToken(parsed, configPath);
   const agents = parsed.agents.map((agent) => ({
     ...agent,

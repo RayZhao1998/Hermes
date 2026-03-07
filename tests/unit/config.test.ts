@@ -19,7 +19,7 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
+      `app:\n  logLevel: info\n  outputMode: text_only\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: auto\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
       "utf8",
     );
 
@@ -29,7 +29,8 @@ describe("config loading", () => {
     expect(loaded.defaultAgentId).toBe("a");
     expect(path.isAbsolute(loaded.agents[0].cwd)).toBe(true);
     expect(loaded.telegram.token).toBe("abc");
-    expect(loaded.tools.approvalMode).toBe("manual");
+    expect(loaded.app.outputMode).toBe("text_only");
+    expect(loaded.tools.approvalMode).toBe("auto");
     expect(loaded.agents[0]?.mcpServers).toEqual([
       {
         name: "filesystem",
@@ -94,6 +95,23 @@ describe("config loading", () => {
     await expect(loadConfig(configPath)).rejects.toThrow("MISSING_TOKEN");
   });
 
+  it("rejects non-full output modes when tool approval mode is manual", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const configPath = path.join(dir, "hermes.config.yaml");
+
+    await writeFile(
+      configPath,
+      `app:\n  outputMode: last_text\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      "utf8",
+    );
+
+    process.env.TEST_TG_TOKEN = "abc";
+
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      "Invalid config: app.outputMode=last_text requires tools.approvalMode=auto",
+    );
+  });
+
   it("rejects duplicate agent ids", () => {
     expect(() =>
       hermesConfigSchema.parse({
@@ -115,6 +133,17 @@ describe("config loading", () => {
     });
 
     expect(parsed.tools.approvalMode).toBe("auto");
+  });
+
+  it("defaults output mode to full", () => {
+    const parsed = hermesConfigSchema.parse({
+      telegram: { enabled: true, tokenEnv: "TG" },
+      agents: [
+        { id: "a", command: "echo", args: [], cwd: ".", env: {} },
+      ],
+    });
+
+    expect(parsed.app.outputMode).toBe("full");
   });
 
   it("defaults agent MCP servers to an empty list", () => {

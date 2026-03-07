@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import type { AvailableCommand, McpServer, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
-import type { ToolApprovalMode } from "../../config/schema.js";
+import type { OutputMode, ToolApprovalMode } from "../../config/schema.js";
 import {
   CommandRouter,
   mergeCommandDefinitions,
@@ -59,7 +59,8 @@ interface ToolCallRenderState {
 
 interface ActiveTurnState {
   turnId: string;
-  emittedContent: boolean;
+  fullText: string;
+  hasVisibleOutput: boolean;
   chunkBuffer: string;
   toolCalls: Map<string, ToolCallRenderState>;
 }
@@ -259,6 +260,7 @@ export interface ChatOrchestratorOptions {
   router: CommandRouter;
   agentManager: AgentProcessManager;
   accessControl: AccessControlConfig;
+  outputMode: OutputMode;
   toolApprovalMode: ToolApprovalMode;
   logger: Logger;
 }
@@ -269,6 +271,7 @@ export class ChatOrchestrator {
   private readonly router: CommandRouter;
   private readonly agentManager: AgentProcessManager;
   private readonly accessControl: AccessControlConfig;
+  private readonly outputMode: OutputMode;
   private readonly toolApprovalMode: ToolApprovalMode;
   private readonly logger: Logger;
   private readonly typingLastSentAtByChat = new Map<string, number>();
@@ -280,6 +283,7 @@ export class ChatOrchestrator {
     this.router = options.router;
     this.agentManager = options.agentManager;
     this.accessControl = options.accessControl;
+    this.outputMode = options.outputMode;
     this.toolApprovalMode = options.toolApprovalMode;
     this.logger = options.logger;
   }
@@ -508,7 +512,8 @@ export class ChatOrchestrator {
     const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, sessionId);
     sessionBinding.activeTurn = {
       turnId,
-      emittedContent: false,
+      fullText: "",
+      hasVisibleOutput: false,
       chunkBuffer: "",
       toolCalls: new Map(),
     };
@@ -519,13 +524,7 @@ export class ChatOrchestrator {
       await this.setTypingIfSupported(message.chatId);
       await client.prompt(sessionId, message.text);
       await this.waitForPendingSessionUpdates(sessionBinding);
-      await this.flushChunkBuffer(sessionBinding);
-      if (!sessionBinding.activeTurn?.emittedContent) {
-        await this.channel.sendMessage(
-          message.chatId,
-          "No textual updates were emitted by the agent during this turn.",
-        );
-      }
+      await this.finalizeTurn(message.chatId, sessionBinding);
     } catch (error) {
       const err = error instanceof Error ? error.message : String(error);
       this.logger.error({ error: err, chatKey, sessionId, agentId: activeAgentId }, "Prompt execution failed");
@@ -675,17 +674,25 @@ export class ChatOrchestrator {
     for (const event of events) {
       if (event.kind === "chunk") {
         binding.activeTurn.chunkBuffer += event.text;
+        binding.activeTurn.fullText += event.text;
         continue;
       }
       if (event.kind === "tool_call") {
-        binding.activeTurn.emittedContent = true;
-        await this.flushChunkBuffer(binding);
-        await this.upsertToolCallMessage(binding, event);
+        if (this.outputMode !== "last_text") {
+          await this.flushChunkBuffer(binding);
+        }
+        if (this.outputMode === "full") {
+          await this.upsertToolCallMessage(binding, event);
+        }
         continue;
       }
-      binding.activeTurn.emittedContent = true;
+      binding.activeTurn.fullText += event.text;
+      if (this.outputMode === "last_text") {
+        continue;
+      }
       await this.flushChunkBuffer(binding);
       await this.channel.sendMessage(binding.chatId, event.text);
+      binding.activeTurn.hasVisibleOutput = true;
     }
   }
 
@@ -694,10 +701,33 @@ export class ChatOrchestrator {
       return;
     }
 
-    binding.activeTurn.emittedContent = true;
     const payload = binding.activeTurn.chunkBuffer;
     binding.activeTurn.chunkBuffer = "";
     await sendChunkedMessage(this.channel, binding.chatId, payload);
+    binding.activeTurn.hasVisibleOutput = true;
+  }
+
+  private async finalizeTurn(chatId: string, binding: SessionBinding): Promise<void> {
+    if (!binding.activeTurn) {
+      return;
+    }
+
+    if (this.outputMode === "last_text") {
+      const finalText = binding.activeTurn.fullText;
+      if (finalText.length > 0) {
+        await sendChunkedMessage(this.channel, chatId, finalText);
+        binding.activeTurn.hasVisibleOutput = true;
+      }
+    } else {
+      await this.flushChunkBuffer(binding);
+    }
+
+    if (!binding.activeTurn.hasVisibleOutput) {
+      await this.channel.sendMessage(
+        chatId,
+        "No textual updates were emitted by the agent during this turn.",
+      );
+    }
   }
 
   private async upsertToolCallMessage(
@@ -749,6 +779,7 @@ export class ChatOrchestrator {
       toolCall.message = await this.channel.sendMessage(binding.chatId, rendered);
     }
     toolCall.rendered = rendered;
+    binding.activeTurn.hasVisibleOutput = true;
 
     binding.activeTurn.toolCalls.set(event.toolCallId, toolCall);
   }

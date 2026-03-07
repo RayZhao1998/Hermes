@@ -12,7 +12,7 @@ import {
   text,
 } from "@clack/prompts";
 import YAML from "yaml";
-import type { AgentConfig, HermesConfig, LogLevel, ToolApprovalMode } from "./schema.js";
+import type { AgentConfig, HermesConfig, LogLevel, OutputMode, ToolApprovalMode } from "./schema.js";
 import { getHermesConfigPath } from "./paths.js";
 import { readConfigSource } from "./load.js";
 
@@ -349,12 +349,14 @@ function buildConfig(params: {
   agents: AgentConfig[];
   defaultAgentId: string;
   logLevel: LogLevel;
+  outputMode: OutputMode;
   telegramToken: string;
   toolApprovalMode: ToolApprovalMode;
 }): HermesConfig {
   return {
     app: {
       logLevel: params.logLevel,
+      outputMode: params.outputMode,
     },
     security: {
       allowedChatIds: params.allowedChatIds,
@@ -462,6 +464,27 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
     }),
   );
 
+  const initialOutputMode =
+    toolApprovalMode === "manual" && existing?.app.outputMode !== "full"
+      ? "full"
+      : existing?.app.outputMode ?? "full";
+
+  const outputMode = unwrapPrompt(
+    await select<OutputMode>({
+      message: "Output mode",
+      initialValue: initialOutputMode,
+      options: toolApprovalMode === "manual"
+        ? [
+            { value: "full", label: "full", hint: "required when tool approval mode is manual" },
+          ]
+        : [
+            { value: "full", label: "full", hint: "show text and tool call updates" },
+            { value: "text_only", label: "text_only", hint: "show only agent text output" },
+            { value: "last_text", label: "last_text", hint: "show only the final text for each turn" },
+          ],
+    }),
+  );
+
   const defaultAgentId =
     agents.length === 1
       ? agents[0].id
@@ -483,6 +506,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
     agents,
     defaultAgentId,
     logLevel,
+    outputMode,
     telegramToken,
     toolApprovalMode,
   });
