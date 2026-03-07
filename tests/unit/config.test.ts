@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
-import { getHermesConfigPath } from "../../src/config/paths.js";
+import { getHermesConfigPath, getHermesWorkspaceDir } from "../../src/config/paths.js";
 import { hermesConfigSchema } from "../../src/config/schema.js";
 
 const originalEnv = { ...process.env };
@@ -16,6 +16,9 @@ describe("config loading", () => {
   it("loads config and resolves default agent", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
     const configPath = path.join(dir, "hermes.config.yaml");
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
+
+    process.env.HOME = homeDir;
 
     await writeFile(
       configPath,
@@ -26,8 +29,10 @@ describe("config loading", () => {
     process.env.TEST_TG_TOKEN = "abc";
 
     const loaded = await loadConfig(configPath);
+    const workspaceDir = getHermesWorkspaceDir(homeDir);
     expect(loaded.defaultAgentId).toBe("a");
-    expect(path.isAbsolute(loaded.agents[0].cwd)).toBe(true);
+    expect(loaded.agents[0]?.cwd).toBe(workspaceDir);
+    await expect(access(workspaceDir)).resolves.toBeUndefined();
     expect(loaded.telegram.token).toBe("abc");
     expect(loaded.app.outputMode).toBe("text_only");
     expect(loaded.tools.approvalMode).toBe("auto");
@@ -63,7 +68,27 @@ describe("config loading", () => {
 
     const loaded = await loadConfig();
     expect(loaded.configPath).toBe(configPath);
+    expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
     expect(loaded.telegram.token).toBe("from-env");
+  });
+
+  it("ignores configured agent cwd and uses the Hermes workspace", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
+    const configPath = path.join(dir, "config.yaml");
+
+    process.env.HOME = homeDir;
+
+    await writeFile(
+      configPath,
+      `telegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: /tmp/legacy-project\n    env: {}\n`,
+      "utf8",
+    );
+
+    process.env.TEST_TG_TOKEN = "abc";
+
+    const loaded = await loadConfig(configPath);
+    expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
   });
 
   it("prefers telegram token from config file", async () => {

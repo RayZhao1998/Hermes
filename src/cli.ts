@@ -32,7 +32,7 @@ async function run(): Promise<void> {
     case undefined:
     case "start":
       await ensureConfig(configPath);
-      await startHermes({ configPath, runtimeCwd: process.cwd() });
+      await startHermes({ configPath });
       return;
     case "onboard":
       await runOnboarding({ configPath });

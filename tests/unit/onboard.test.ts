@@ -2,6 +2,7 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { getHermesWorkspaceDir } from "../../src/config/paths.js";
 import { detectSupportedAgents } from "../../src/config/onboard.js";
 
 const originalEnv = { ...process.env };
@@ -36,9 +37,11 @@ describe("onboarding agent detection", () => {
 
   it("preserves existing agent settings when a supported agent is detected", async () => {
     const binDir = await mkdtemp(path.join(os.tmpdir(), "hermes-bin-"));
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
     await createExecutable(binDir, "codex-acp");
 
     process.env.PATH = binDir;
+    process.env.HOME = homeDir;
 
     const detected = await detectSupportedAgents([
       {
@@ -57,7 +60,7 @@ describe("onboarding agent detection", () => {
       id: "my-codex",
       command: "codex-acp",
       args: [],
-      cwd: "/tmp/project",
+      cwd: getHermesWorkspaceDir(homeDir),
       env: { FOO: "bar" },
       default: true,
     });

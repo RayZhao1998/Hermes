@@ -13,7 +13,7 @@ import {
 } from "@clack/prompts";
 import YAML from "yaml";
 import type { AgentConfig, HermesConfig, LogLevel, OutputMode, ToolApprovalMode } from "./schema.js";
-import { getHermesConfigPath } from "./paths.js";
+import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
 import { readConfigSource } from "./load.js";
 
 interface OnboardOptions {
@@ -173,7 +173,7 @@ function mergeWithExistingAgent(detected: AgentConfig, existing: AgentConfig | u
     env: existing?.env ?? {},
     mcpServers: existing?.mcpServers ?? [],
     default: existing?.default,
-    cwd: existing?.cwd ?? ".",
+    cwd: getHermesWorkspaceDir(),
   };
 }
 
@@ -299,7 +299,7 @@ async function promptManualAgent(existingAgent: AgentConfig | undefined, reserve
     id,
     command,
     args: parseStringArray(argsInput, "Agent args"),
-    cwd: existingAgent?.cwd ?? ".",
+    cwd: getHermesWorkspaceDir(),
     env: parseStringRecord(envInput, "Agent env"),
     mcpServers: existingAgent?.mcpServers ?? [],
     default: existingAgent?.default,
@@ -391,6 +391,7 @@ async function writeConfigFile(configPath: string, config: HermesConfig): Promis
 
 export async function runOnboarding(options: OnboardOptions = {}): Promise<string> {
   const configPath = options.configPath ?? getHermesConfigPath();
+  const workspaceDir = getHermesWorkspaceDir();
   const existing = await maybeReadExistingConfig(configPath);
   const existingToken = existing?.telegram.token ?? "";
   const existingDefaultAgentId = existing?.agents.find((agent) => agent.default)?.id;
@@ -401,8 +402,9 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
   note(
     [
       `Config path: ${configPath}`,
+      `Agent workspace: ${workspaceDir}`,
       "This flow sets up Telegram, access control, and ACP agents.",
-      "Working directory is no longer configured in onboarding; auto-configured agents use cwd='.'.",
+      "Agent working directory is fixed to the Hermes workspace.",
     ].join("\n"),
     "Setup",
   );

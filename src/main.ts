@@ -9,11 +9,10 @@ import { ChatOrchestrator } from "./core/orchestrator/ChatOrchestrator.js";
 
 interface StartHermesOptions {
   configPath?: string;
-  runtimeCwd?: string;
 }
 
 export async function startHermes(options: StartHermesOptions = {}): Promise<void> {
-  const config = await loadConfig(options.configPath, options.runtimeCwd);
+  const config = await loadConfig(options.configPath);
 
   const logger = pino({ level: config.app.logLevel });
 

@@ -1,12 +1,7 @@
-import { access, readFile } from "node:fs/promises";
-import path from "node:path";
+import { access, mkdir, readFile } from "node:fs/promises";
 import YAML from "yaml";
-import { getHermesConfigPath } from "./paths.js";
+import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
 import { type HermesConfig, type LoadedHermesConfig, hermesConfigSchema } from "./schema.js";
-
-function resolveAgentCwd(runtimeCwd: string, cwd: string): string {
-  return path.isAbsolute(cwd) ? cwd : path.resolve(runtimeCwd, cwd);
-}
 
 function pickDefaultAgentId(agents: Array<{ id: string; default?: boolean }>): string {
   const explicit = agents.find((agent) => agent.default);
@@ -55,14 +50,15 @@ export async function readConfigSource(configPath = getHermesConfigPath()): Prom
 
 export async function loadConfig(
   configPath = getHermesConfigPath(),
-  runtimeCwd = process.cwd(),
 ): Promise<LoadedHermesConfig> {
   const parsed = await readConfigSource(configPath);
   validateRuntimeConfig(parsed, configPath);
   const token = resolveTelegramToken(parsed, configPath);
+  const workspaceDir = getHermesWorkspaceDir();
+  await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
   const agents = parsed.agents.map((agent) => ({
     ...agent,
-    cwd: resolveAgentCwd(runtimeCwd, agent.cwd),
+    cwd: workspaceDir,
   }));
 
   return {

@@ -63,9 +63,26 @@ npx hermes-gateway@latest
 
 ## Setup
 
-Hermes stores its config at `~/.hermes/config.yaml`.
+Hermes stores its config at `~/.hermes/config.yaml` and uses `~/.hermes/workspace` as the agent workspace.
+
+All configured agents are started from `~/.hermes/workspace`, not from the shell directory where you launch `hermes` or `npx hermes-gateway`.
 
 The onboarding command creates this file interactively and scans your `PATH` for known ACP agent commands, including `kimi`, `codex-acp`, `claude-code-acp`, and `claude-agent-acp`.
+
+If you rely on repo-local instruction files, copy or link them into `~/.hermes/workspace` so the agent can see them consistently. This is similar to how OpenClaw keeps a dedicated agent workspace.
+
+Most agents look for `AGENTS.md`. Claude Code uses `CLAUDE.md` as its primary instruction file. You may also want to expose companion files such as `SOUL.md`.
+
+Using symlinks is usually the simplest way to keep these files in sync with your repo:
+
+```bash
+mkdir -p ~/.hermes/workspace
+ln -s /path/to/project/AGENTS.md ~/.hermes/workspace/AGENTS.md
+ln -s /path/to/project/SOUL.md ~/.hermes/workspace/SOUL.md
+ln -s /path/to/project/CLAUDE.md ~/.hermes/workspace/CLAUDE.md
+```
+
+If a file already exists in the workspace, replace it first or use `ln -sf` when appropriate.
 
 Example config:
 
@@ -90,7 +107,7 @@ agents:
   - id: kimi
     command: kimi
     args: ["acp"]
-    cwd: .
+    cwd: /Users/alice/.hermes/workspace
     env: {}
     mcpServers: []
     default: true
@@ -98,10 +115,12 @@ agents:
   - id: codex
     command: codex-acp
     args: []
-    cwd: .
+    cwd: /Users/alice/.hermes/workspace
     env: {}
     mcpServers: []
 ```
+
+The `cwd` field is kept in config for compatibility, but Hermes currently runs every agent in `~/.hermes/workspace`.
 
 `app.outputMode` supports:
 - `full`: stream agent text and tool call updates.
