@@ -65,6 +65,8 @@ npx hermes-gateway@latest
 
 如果 `~/.hermes/config.yaml` 还不存在，Hermes 会在首次运行时交互式创建它。
 
+当前生成的配置会把 Telegram bot token 直接写到 `telegram.token`。
+
 ## 配置
 
 Hermes 使用 `~/.hermes/workspace` 作为 agent 工作区。

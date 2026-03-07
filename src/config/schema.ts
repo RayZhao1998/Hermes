@@ -47,8 +47,7 @@ const agentConfigSchema = z.object({
 });
 const telegramConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  token: z.string().min(1).optional(),
-  tokenEnv: z.string().min(1).default("TELEGRAM_BOT_TOKEN"),
+  token: z.string().min(1, "Telegram token must not be empty.").optional(),
 });
 
 export const hermesConfigSchema = z
@@ -65,7 +64,7 @@ export const hermesConfigSchema = z
         allowedUserIds: z.array(z.string()).default([]),
       })
       .default({ allowedChatIds: [], allowedUserIds: [] }),
-    telegram: telegramConfigSchema.default({ enabled: true, tokenEnv: "TELEGRAM_BOT_TOKEN" }),
+    telegram: telegramConfigSchema,
     tools: z
       .object({
         approvalMode: toolApprovalModeSchema.default("auto"),
@@ -86,11 +85,11 @@ export const hermesConfigSchema = z
       seen.add(agent.id);
     }
 
-    if (config.telegram.enabled && !config.telegram.token && !config.telegram.tokenEnv) {
+    if (config.telegram.enabled && !config.telegram.token) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["telegram"],
-        message: "Telegram token or tokenEnv must be configured when Telegram is enabled.",
+        message: "Telegram token must be configured when Telegram is enabled.",
       });
     }
   });
@@ -110,7 +109,6 @@ export interface LoadedHermesConfig {
   security: HermesConfig["security"];
   telegram: {
     enabled: boolean;
-    tokenEnv: string;
     token: string;
   };
   tools: HermesConfig["tools"];

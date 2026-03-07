@@ -65,6 +65,8 @@ npx hermes-gateway@latest
 
 On first run, Hermes creates `~/.hermes/config.yaml` interactively if it does not exist yet.
 
+The generated config stores the Telegram bot token directly under `telegram.token`.
+
 ## Setup
 
 Hermes uses `~/.hermes/workspace` as its agent workspace.

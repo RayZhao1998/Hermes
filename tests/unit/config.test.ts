@@ -22,11 +22,9 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\n  outputMode: text_only\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: auto\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
+      `app:\n  logLevel: info\n  outputMode: text_only\nsecurity:\n  allowedChatIds: []\n  allowedUserIds: []\ntelegram:\n  enabled: true\n  token: abc\ntools:\n  approvalMode: auto\nagents:\n  - id: a\n    command: echo\n    args: [\"ok\"]\n    cwd: .\n    env: {}\n    mcpServers:\n      - name: filesystem\n        command: npx\n        args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n        env:\n          - name: NODE_ENV\n            value: test\n      - type: http\n        name: docs\n        url: https://mcp.example.com\n        headers:\n          - name: Authorization\n            value: Bearer token\n    default: true\n`,
       "utf8",
     );
-
-    process.env.TEST_TG_TOKEN = "abc";
 
     const loaded = await loadConfig(configPath);
     const workspaceDir = getHermesWorkspaceDir(homeDir);
@@ -57,19 +55,18 @@ describe("config loading", () => {
     const configPath = getHermesConfigPath(homeDir);
 
     process.env.HOME = homeDir;
-    process.env.TELEGRAM_BOT_TOKEN = "from-env";
     await mkdir(path.dirname(configPath), { recursive: true });
 
     await writeFile(
       configPath,
-      `agents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `telegram:\n  enabled: true\n  token: from-config\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
       "utf8",
     );
 
     const loaded = await loadConfig();
     expect(loaded.configPath).toBe(configPath);
     expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
-    expect(loaded.telegram.token).toBe("from-env");
+    expect(loaded.telegram.token).toBe("from-config");
   });
 
   it("ignores configured agent cwd and uses the Hermes workspace", async () => {
@@ -81,43 +78,25 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `telegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: /tmp/legacy-project\n    env: {}\n`,
+      `telegram:\n  enabled: true\n  token: abc\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: /tmp/legacy-project\n    env: {}\n`,
       "utf8",
     );
-
-    process.env.TEST_TG_TOKEN = "abc";
 
     const loaded = await loadConfig(configPath);
     expect(loaded.agents[0]?.cwd).toBe(getHermesWorkspaceDir(homeDir));
   });
 
-  it("prefers telegram token from config file", async () => {
+  it("throws when telegram token is missing", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
     const configPath = path.join(dir, "config.yaml");
 
-    process.env.TELEGRAM_BOT_TOKEN = "from-env";
-
     await writeFile(
       configPath,
-      `telegram:\n  enabled: true\n  token: from-config\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `telegram:\n  enabled: true\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
       "utf8",
     );
 
-    const loaded = await loadConfig(configPath);
-    expect(loaded.telegram.token).toBe("from-config");
-  });
-
-  it("throws when telegram token env is missing", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
-    const configPath = path.join(dir, "hermes.config.yaml");
-
-    await writeFile(
-      configPath,
-      `telegram:\n  enabled: true\n  tokenEnv: MISSING_TOKEN\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
-      "utf8",
-    );
-
-    await expect(loadConfig(configPath)).rejects.toThrow("MISSING_TOKEN");
+    await expect(loadConfig(configPath)).rejects.toThrow("Telegram token must be configured");
   });
 
   it("rejects non-full output modes when tool approval mode is manual", async () => {
@@ -126,11 +105,9 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  outputMode: last_text\ntelegram:\n  enabled: true\n  tokenEnv: TEST_TG_TOKEN\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
+      `app:\n  outputMode: last_text\ntelegram:\n  enabled: true\n  token: abc\ntools:\n  approvalMode: manual\nagents:\n  - id: a\n    command: echo\n    args: []\n    cwd: .\n    env: {}\n`,
       "utf8",
     );
-
-    process.env.TEST_TG_TOKEN = "abc";
 
     await expect(loadConfig(configPath)).rejects.toThrow(
       "Invalid config: app.outputMode=last_text requires tools.approvalMode=auto",
@@ -140,7 +117,7 @@ describe("config loading", () => {
   it("rejects duplicate agent ids", () => {
     expect(() =>
       hermesConfigSchema.parse({
-        telegram: { enabled: true, tokenEnv: "TG" },
+        telegram: { enabled: true, token: "TG" },
         agents: [
           { id: "a", command: "echo", args: [], cwd: ".", env: {} },
           { id: "a", command: "echo", args: [], cwd: ".", env: {} },
@@ -151,7 +128,7 @@ describe("config loading", () => {
 
   it("defaults tool approval mode to auto", () => {
     const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, tokenEnv: "TG" },
+      telegram: { enabled: true, token: "TG" },
       agents: [
         { id: "a", command: "echo", args: [], cwd: ".", env: {} },
       ],
@@ -162,7 +139,7 @@ describe("config loading", () => {
 
   it("defaults output mode to full", () => {
     const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, tokenEnv: "TG" },
+      telegram: { enabled: true, token: "TG" },
       agents: [
         { id: "a", command: "echo", args: [], cwd: ".", env: {} },
       ],
@@ -173,7 +150,7 @@ describe("config loading", () => {
 
   it("defaults agent MCP servers to an empty list", () => {
     const parsed = hermesConfigSchema.parse({
-      telegram: { enabled: true, tokenEnv: "TG" },
+      telegram: { enabled: true, token: "TG" },
       agents: [
         { id: "a", command: "echo", args: [], cwd: ".", env: {} },
       ],

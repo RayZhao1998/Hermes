@@ -365,7 +365,6 @@ function buildConfig(params: {
     telegram: {
       enabled: true,
       token: params.telegramToken,
-      tokenEnv: "TELEGRAM_BOT_TOKEN",
     },
     tools: {
       approvalMode: params.toolApprovalMode,

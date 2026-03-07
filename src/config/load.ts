@@ -13,16 +13,10 @@ function resolveTelegramToken(config: HermesConfig, configPath: string): string 
     return "";
   }
 
-  if (config.telegram.token) {
-    return config.telegram.token;
+  if (!config.telegram.token) {
+    throw new Error(`Missing Telegram token in config (${configPath})`);
   }
-
-  const token = process.env[config.telegram.tokenEnv] ?? "";
-  if (!token) {
-    throw new Error(`Missing Telegram token in config or env var ${config.telegram.tokenEnv} (${configPath})`);
-  }
-
-  return token;
+  return config.telegram.token;
 }
 
 function validateRuntimeConfig(config: HermesConfig, configPath: string): void {
@@ -66,7 +60,6 @@ export async function loadConfig(
     security: parsed.security,
     telegram: {
       enabled: parsed.telegram.enabled,
-      tokenEnv: parsed.telegram.tokenEnv,
       token,
     },
     tools: parsed.tools,
