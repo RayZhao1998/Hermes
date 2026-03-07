@@ -43,8 +43,8 @@ The workflow is currently configured around the unscoped package name `hermes-ga
 3. Push the matching tag:
 
 ```bash
-git tag v0.0.3
-git push origin v0.0.3
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow then:
