@@ -451,6 +451,29 @@ describe("ChatOrchestrator + ACP integration", () => {
     expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain("[mcp:filesystem,docs]");
   });
 
+  it("runs scheduled tasks in an isolated session without disturbing chat state", async () => {
+    await orchestrator.runScheduledTask({
+      id: "daily-report",
+      enabled: true,
+      botId: "tg-main",
+      chatId: "1001",
+      agentId: "fake",
+      workspaceId: "alt",
+      prompt: "please report cwd and report model",
+      schedule: {
+        type: "interval",
+        everySeconds: 3600,
+      },
+    });
+
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const merged = adapter.messages.map((entry) => entry.text).join("\n");
+    expect(merged).toContain(`[cwd:${path.join(workspaceRoot, "alt")}]`);
+    expect(merged).toContain("[model:gpt-5]");
+    expect(merged).toContain("permission:allow");
+  });
+
   it("resets chat-scoped commands when the active agent changes", async () => {
     await adapter.emit("/new");
     await waitFor(() => adapter.syncedCommands.length >= 2);

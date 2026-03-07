@@ -46,6 +46,7 @@ describe("config loading", () => {
       allowChats: ["telegram:1"],
       allowUsers: ["telegram:2"],
     });
+    expect(loaded.tasksPath).toBe(path.join(dir, "tasks.yaml"));
     await expect(access(workspaceDir)).resolves.toBeUndefined();
   });
 
@@ -70,6 +71,7 @@ describe("config loading", () => {
     expect(loaded.bots[0]?.channel).toBe("telegram");
     expect(loaded.bots[0]?.defaultWorkspaceId).toBe(DEFAULT_WORKSPACE_ID);
     expect(loaded.bots[0]?.profile.defaultAgentId).toBe("a");
+    expect(loaded.tasksPath).toBe(path.join(homeDir, ".hermes", "tasks.yaml"));
   });
 
   it("rejects the old top-level config shape", async () => {

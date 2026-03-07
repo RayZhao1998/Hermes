@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { access, mkdir, readFile } from "node:fs/promises";
 import YAML from "yaml";
-import { getHermesConfigPath, getHermesWorkspaceDir } from "./paths.js";
+import { getHermesConfigPath, getHermesWorkspaceDir, HERMES_TASKS_FILENAME } from "./paths.js";
 import {
   type AgentConfig,
   type HermesConfig,
@@ -154,5 +154,6 @@ export async function loadConfig(
     profiles,
     bots,
     configPath,
+    tasksPath: path.join(path.dirname(configPath), HERMES_TASKS_FILENAME),
   };
 }

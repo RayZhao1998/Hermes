@@ -299,4 +299,5 @@ export interface LoadedHermesConfig {
   profiles: LoadedProfileConfig[];
   bots: LoadedBotConfig[];
   configPath: string;
+  tasksPath: string;
 }

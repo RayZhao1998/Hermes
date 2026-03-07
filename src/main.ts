@@ -7,6 +7,7 @@ import { AgentProcessManager } from "./core/acp/AgentProcessManager.js";
 import { ChatOrchestrator } from "./core/orchestrator/ChatOrchestrator.js";
 import { CommandRouter } from "./core/router/CommandRouter.js";
 import { InMemoryChatStateStore } from "./core/state/InMemoryChatStateStore.js";
+import { TaskScheduler } from "./core/tasks/TaskScheduler.js";
 
 interface StartHermesOptions {
   configPath?: string;
@@ -41,9 +42,14 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
 
   const managers = new Map<string, AgentProcessManager>();
   const orchestrators: ChatOrchestrator[] = [];
+  const orchestratorsByBotId = new Map<string, ChatOrchestrator>();
+  let scheduler: TaskScheduler | undefined;
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "Shutting down Hermes");
+    if (scheduler) {
+      await scheduler.stop();
+    }
     await Promise.allSettled(orchestrators.map(async (orchestrator) => {
       await orchestrator.stop();
     }));
@@ -84,9 +90,20 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
 
       await orchestrator.start();
       orchestrators.push(orchestrator);
+      orchestratorsByBotId.set(bot.id, orchestrator);
       logger.info({ botId: bot.id, channel: bot.channel, profileId: bot.profileId }, "Bot started");
     }
+
+    scheduler = new TaskScheduler({
+      config,
+      executorsByBotId: orchestratorsByBotId,
+      logger: logger.child({ component: "tasks" }),
+    });
+    await scheduler.start();
   } catch (error) {
+    if (scheduler) {
+      await scheduler.stop();
+    }
     await Promise.allSettled(orchestrators.map(async (orchestrator) => {
       await orchestrator.stop();
     }));

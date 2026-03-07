@@ -3,6 +3,7 @@ import type { AvailableCommand, McpServer, RequestPermissionResponse, SessionUpd
 import type { ChannelAdapter, OutboundMessageHandle } from "../channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../channel/MessageEnvelope.js";
 import type { LoadedWorkspaceConfig, OutputMode, ToolApprovalMode } from "../../config/schema.js";
+import type { ScheduledTaskConfig } from "../../config/tasks-schema.js";
 import {
   CommandRouter,
   mergeCommandDefinitions,
@@ -71,7 +72,15 @@ interface SessionBinding {
   sessionId: string;
   unsubscribe: () => void;
   pendingSessionUpdates: Promise<void>;
+  stateKey?: string;
+  syncCommands: boolean;
   activeTurn?: ActiveTurnState;
+}
+
+interface BindSessionOptions {
+  stateKey?: string;
+  syncCommands?: boolean;
+  enablePermissionRequests?: boolean;
 }
 
 function extractTextBlock(content: unknown): string | undefined {
@@ -322,6 +331,59 @@ export class ChatOrchestrator {
     await this.channel.stop();
   }
 
+  async runScheduledTask(task: ScheduledTaskConfig): Promise<void> {
+    if (this.toolApprovalMode !== "auto") {
+      throw new Error(
+        `Scheduled task '${task.id}' requires tools.approvalMode=auto for bot '${task.botId}'.`,
+      );
+    }
+
+    const agentId = task.agentId ?? this.agentManager.getDefaultAgentId();
+    const workspaceId = task.workspaceId ?? this.defaultWorkspaceId;
+    const workspace = this.requireWorkspace(workspaceId);
+    const client = await this.agentManager.getClient(agentId);
+    const sessionId = await client.newSession(
+      workspace.path,
+      this.agentManager.getAgentMcpServers(agentId),
+    );
+
+    const bindingKey = `scheduled:${task.id}:${Date.now()}`;
+    const turnId = `${bindingKey}:turn`;
+    const binding = await this.bindSession(bindingKey, task.chatId, agentId, sessionId, {
+      syncCommands: false,
+      enablePermissionRequests: false,
+    });
+
+    binding.activeTurn = {
+      turnId,
+      fullText: "",
+      hasVisibleOutput: false,
+      chunkBuffer: "",
+      toolCalls: new Map(),
+    };
+
+    try {
+      await this.setTypingIfSupported(task.chatId);
+      await client.prompt(sessionId, task.prompt);
+      await this.waitForPendingSessionUpdates(binding);
+      await this.finalizeTurn(task.chatId, binding);
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        { error: err, taskId: task.id, sessionId, agentId, botId: task.botId },
+        "Scheduled task execution failed",
+      );
+      await this.channel.sendMessage(task.chatId, `Scheduled task '${task.id}' failed: ${err}`);
+      throw error;
+    } finally {
+      if (binding.activeTurn?.turnId === turnId) {
+        binding.activeTurn = undefined;
+      }
+      this.typingLastSentAtByChat.delete(task.chatId);
+      this.releaseSessionBinding(bindingKey);
+    }
+  }
+
   async handleMessage(message: MessageEnvelope): Promise<void> {
     this.logger.info(
       { platform: message.platform, chatId: message.chatId, userId: message.userId, text: message.text },
@@ -472,7 +534,11 @@ export class ChatOrchestrator {
           this.agentManager.getAgentMcpServers(state.activeAgentId),
         );
         this.stateStore.setSession(chatKey, sessionId);
-        await this.bindSession(chatKey, message.chatId, state.activeAgentId, sessionId);
+        await this.bindSession(chatKey, message.chatId, state.activeAgentId, sessionId, {
+          stateKey: chatKey,
+          syncCommands: true,
+          enablePermissionRequests: this.toolApprovalMode === "manual",
+        });
         await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(
           message.chatId,
@@ -598,7 +664,11 @@ export class ChatOrchestrator {
 
     const turnId = `${Date.now()}-${message.messageId}`;
     this.stateStore.setActiveTurn(chatKey, turnId);
-    const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, sessionId);
+    const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, sessionId, {
+      stateKey: chatKey,
+      syncCommands: true,
+      enablePermissionRequests: this.toolApprovalMode === "manual",
+    });
     sessionBinding.activeTurn = {
       turnId,
       fullText: "",
@@ -631,17 +701,18 @@ export class ChatOrchestrator {
   }
 
   private async bindSession(
-    chatKey: string,
+    bindingKey: string,
     chatId: string,
     agentId: string,
     sessionId: string,
+    options: BindSessionOptions = {},
   ): Promise<SessionBinding> {
-    const existing = this.sessionBindings.get(chatKey);
+    const existing = this.sessionBindings.get(bindingKey);
     if (existing && existing.sessionId === sessionId && existing.agentId === agentId) {
       return existing;
     }
 
-    this.releaseSessionBinding(chatKey);
+    this.releaseSessionBinding(bindingKey);
 
     const client = await this.agentManager.getClient(agentId);
     const binding: SessionBinding = {
@@ -650,9 +721,11 @@ export class ChatOrchestrator {
       sessionId,
       unsubscribe: () => undefined,
       pendingSessionUpdates: Promise.resolve(),
+      stateKey: options.stateKey,
+      syncCommands: options.syncCommands ?? false,
     };
 
-    const unsubscribePermission = this.toolApprovalMode === "manual"
+    const unsubscribePermission = options.enablePermissionRequests
       ? client.onRequestPermission(sessionId, async (params, signal): Promise<RequestPermissionResponse> => {
           if (!this.channel.requestPermission) {
             this.logger.warn(
@@ -722,7 +795,7 @@ export class ChatOrchestrator {
       binding.pendingSessionUpdates = binding.pendingSessionUpdates
         .catch(() => undefined)
         .then(async () => {
-          await this.handleSessionUpdate(chatKey, binding, update);
+          await this.handleSessionUpdate(binding, update);
         });
 
       await binding.pendingSessionUpdates;
@@ -733,8 +806,10 @@ export class ChatOrchestrator {
       unsubscribeUpdates();
     };
 
-    this.sessionBindings.set(chatKey, binding);
-    this.stateStore.setAvailableCommands(chatKey, client.getAvailableCommands(sessionId));
+    this.sessionBindings.set(bindingKey, binding);
+    if (binding.stateKey) {
+      this.stateStore.setAvailableCommands(binding.stateKey, client.getAvailableCommands(sessionId));
+    }
     return binding;
   }
 
@@ -747,11 +822,11 @@ export class ChatOrchestrator {
     this.sessionBindings.delete(chatKey);
   }
 
-  private async handleSessionUpdate(chatKey: string, binding: SessionBinding, update: SessionUpdate): Promise<void> {
+  private async handleSessionUpdate(binding: SessionBinding, update: SessionUpdate): Promise<void> {
     const availableCommands = extractAvailableCommands(update);
-    if (availableCommands) {
-      this.stateStore.setAvailableCommands(chatKey, availableCommands);
-      await this.syncCommands(chatKey, binding.chatId);
+    if (availableCommands && binding.stateKey && binding.syncCommands) {
+      this.stateStore.setAvailableCommands(binding.stateKey, availableCommands);
+      await this.syncCommands(binding.stateKey, binding.chatId);
     }
 
     if (!binding.activeTurn) {
