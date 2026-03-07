@@ -1,8 +1,10 @@
 # Hermes
 
-Hermes is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) gateway that brings ACP-compatible coding agents into chat applications.
+English | [简体中文](./README.zh-CN.md)
 
-It uses the [Chat SDK](https://chat-sdk.dev/) for chat-platform transport and keeps the agent side protocol-native, so the same Hermes instance can front any agent that speaks ACP over `stdio`.
+Hermes turns ACP-compatible agents into an OpenClaw-style personal assistant, then exposes that assistant to chat applications through the [Chat SDK](https://chat-sdk.dev/).
+
+It keeps the agent side protocol-native, so the same Hermes instance can front any agent that speaks ACP over `stdio` while presenting it through Telegram today and more chat platforms over time.
 
 Examples of compatible agents include:
 
@@ -12,7 +14,9 @@ Examples of compatible agents include:
 
 ## Why Hermes
 
-- Run ACP agents from chat instead of a terminal.
+- Turn ACP agents into a persistent personal assistant instead of a terminal-only tool.
+- Reuse the OpenClaw-style workspace model with a dedicated `~/.hermes/workspace`.
+- Expose the same assistant to chat applications through Chat SDK adapters.
 - Keep one persistent process per configured agent.
 - Create chat-scoped sessions on demand with `/new`.
 - Merge built-in Hermes commands with agent-published ACP commands.
@@ -50,89 +54,26 @@ Use Hermes either as a global CLI or directly with `npx`.
 
 ```bash
 npm install -g hermes-gateway
-hermes onboard
 hermes
 ```
 
 Or:
 
 ```bash
-npx hermes-gateway@latest onboard
 npx hermes-gateway@latest
 ```
 
+On first run, Hermes creates `~/.hermes/config.yaml` interactively if it does not exist yet.
+
 ## Setup
 
-Hermes stores its config at `~/.hermes/config.yaml` and uses `~/.hermes/workspace` as the agent workspace.
+Hermes uses `~/.hermes/workspace` as its agent workspace.
 
-All configured agents are started from `~/.hermes/workspace`, not from the shell directory where you launch `hermes` or `npx hermes-gateway`.
-
-The onboarding command creates this file interactively and scans your `PATH` for known ACP agent commands, including `kimi`, `codex-acp`, `claude-code-acp`, and `claude-agent-acp`.
-
-If you rely on repo-local instruction files, copy or link them into `~/.hermes/workspace` so the agent can see them consistently. This is similar to how OpenClaw keeps a dedicated agent workspace.
-
-Most agents look for `AGENTS.md`. Claude Code uses `CLAUDE.md` as its primary instruction file. You may also want to expose companion files such as `SOUL.md`.
-
-Using symlinks is usually the simplest way to keep these files in sync with your repo:
+If you already use OpenClaw, you can copy everything from `~/.openclaw/workspace` into `~/.hermes/workspace` and keep working with the same instructions, memory files, and supporting assets.
 
 ```bash
 mkdir -p ~/.hermes/workspace
-ln -s /path/to/project/AGENTS.md ~/.hermes/workspace/AGENTS.md
-ln -s /path/to/project/SOUL.md ~/.hermes/workspace/SOUL.md
-ln -s /path/to/project/CLAUDE.md ~/.hermes/workspace/CLAUDE.md
-```
-
-If a file already exists in the workspace, replace it first or use `ln -sf` when appropriate.
-
-Example config:
-
-```yaml
-app:
-  logLevel: info
-  outputMode: full
-
-security:
-  allowedChatIds:
-    - telegram:123456789
-  allowedUserIds: []
-
-telegram:
-  enabled: true
-  tokenEnv: TELEGRAM_BOT_TOKEN
-
-tools:
-  approvalMode: manual
-
-agents:
-  - id: kimi
-    command: kimi
-    args: ["acp"]
-    cwd: /Users/alice/.hermes/workspace
-    env: {}
-    mcpServers: []
-    default: true
-
-  - id: codex
-    command: codex-acp
-    args: []
-    cwd: /Users/alice/.hermes/workspace
-    env: {}
-    mcpServers: []
-```
-
-The `cwd` field is kept in config for compatibility, but Hermes currently runs every agent in `~/.hermes/workspace`.
-
-`app.outputMode` supports:
-- `full`: stream agent text and tool call updates.
-- `text_only`: only send agent text output.
-- `last_text`: only send the final text content from the current prompt turn.
-
-When `app.outputMode` is `text_only` or `last_text`, `tools.approvalMode` must be `auto`.
-
-Recommended environment setup:
-
-```bash
-export TELEGRAM_BOT_TOKEN=your_bot_token
+cp -R ~/.openclaw/workspace/. ~/.hermes/workspace/
 ```
 
 ## Usage
