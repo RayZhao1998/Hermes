@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.0 - 2026-03-08
+
+Hermes 0.3.0 adds file-backed scheduled tasks, expands ACP session controls for selectable modes and models, and improves Telegram pickers so common chat actions can be completed without typing command arguments.
+
+### Highlights
+
+- Added `tasks.yaml` support so Hermes can deliver scheduled prompts to chats on a one-time, interval, or cron basis.
+- Added `/modes`, `/mode`, `/models`, and `/model` session controls, including support for ACP config-option based model selection.
+- Switched Telegram list-style actions to inline button pickers for workspaces, agents, modes, and models.
+
+### New
+
+- Added scheduled task loading, validation, runtime state persistence, and polling execution through the new `TaskScheduler`.
+- Added isolated scheduled-task execution so background prompts do not disturb the chat's active session, workspace, mode, or model.
+- Added config support for `bots[].defaultMode` so new sessions can start with a preferred ACP mode.
+- Added ACP tracking for selectable session modes and both config-option and legacy model selection APIs.
+
+### Changed
+
+- `/status` now reports the current session mode and model when the active agent exposes them.
+- Telegram selection flows now use buttons instead of text-entered ids for supported list commands.
+- Hermes startup now loads the tasks file path alongside the main config and wires the scheduler into runtime boot.
+- Documentation now covers the expanded Telegram command surface and mode/model controls.
+
+### Validation
+
+- `npm run build`
+- `npm test`
+- `npm pack`
+
 ## 0.2.0 - 2026-03-07
 
 Hermes 0.2.0 restructures runtime configuration around reusable profiles and concrete bots, adds named workspaces with chat-level switching, and refreshes the product docs around the OpenClaw-style assistant model. This is a breaking release for existing deployments.
