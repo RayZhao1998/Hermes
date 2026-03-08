@@ -453,11 +453,27 @@ export class ChatOrchestrator {
 
     switch (command.name) {
       case "agents": {
+        if (this.channel.showSelectionPicker) {
+          await this.channel.showSelectionPicker(message.chatId, {
+            action: "agent",
+            title: `Select an agent. Current: ${state.activeAgentId}`,
+            options: this.agentManager.listAgents().map((agent) => ({
+              id: agent.id,
+              label: agent.id,
+              selected: agent.id === state.activeAgentId,
+            })),
+          });
+          return;
+        }
+
         const rows = this.agentManager.listAgents().map((agent) => {
           const marker = agent.id === state.activeAgentId ? "*" : " ";
           return `${marker} ${agent.id}`;
         });
-        await this.channel.sendMessage(message.chatId, `Available agents:\n${rows.join("\n")}`);
+        await this.channel.sendMessage(
+          message.chatId,
+          `Available agents:\n${rows.join("\n")}\nUse /agent <id> to switch.`,
+        );
         return;
       }
       case "agent": {
@@ -487,15 +503,17 @@ export class ChatOrchestrator {
       case "workspace": {
         const workspaceId = command.args[0];
         if (!workspaceId) {
-          if (this.channel.showWorkspacePicker) {
-            await this.channel.showWorkspacePicker(
-              message.chatId,
-              this.orderedWorkspaces.map((workspace) => ({
+          if (this.channel.showSelectionPicker) {
+            await this.channel.showSelectionPicker(message.chatId, {
+              action: "workspace",
+              title: `Select a workspace for the next session. Current: ${state.activeWorkspaceId}`,
+              options: this.orderedWorkspaces.map((workspace) => ({
                 id: workspace.id,
-                path: workspace.path,
+                label: workspace.id,
+                description: workspace.path,
                 selected: workspace.id === state.activeWorkspaceId,
               })),
-            );
+            });
             return;
           }
 
@@ -581,6 +599,20 @@ export class ChatOrchestrator {
           return;
         }
 
+        if (this.channel.showSelectionPicker) {
+          await this.channel.showSelectionPicker(message.chatId, {
+            action: "mode",
+            title: `Select a mode. Current: ${selection.currentModeId}`,
+            options: selection.modes.map((mode) => ({
+              id: mode.id,
+              label: mode.id,
+              description: mode.name,
+              selected: mode.id === selection.currentModeId,
+            })),
+          });
+          return;
+        }
+
         await this.channel.sendMessage(message.chatId, formatModeSelection(selection));
         return;
       }
@@ -638,6 +670,20 @@ export class ChatOrchestrator {
             message.chatId,
             "Active agent does not expose selectable models for this session.",
           );
+          return;
+        }
+
+        if (this.channel.showSelectionPicker) {
+          await this.channel.showSelectionPicker(message.chatId, {
+            action: "model",
+            title: `Select a model. Current: ${selection.currentModelId}`,
+            options: selection.models.map((model) => ({
+              id: model.id,
+              label: model.id,
+              description: model.name,
+              selected: model.id === selection.currentModelId,
+            })),
+          });
           return;
         }
 

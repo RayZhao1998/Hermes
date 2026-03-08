@@ -13,7 +13,7 @@ import { AgentProcessManager } from "../../src/core/acp/AgentProcessManager.js";
 import type {
   ChannelAdapter,
   OutboundMessageHandle,
-  WorkspacePickerOption,
+  SelectionPicker,
 } from "../../src/core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../src/core/channel/MessageEnvelope.js";
 import type { ToolPermissionDecision, ToolPermissionRequest } from "../../src/core/channel/PermissionRequest.js";
@@ -35,7 +35,7 @@ class MockChannelAdapter implements ChannelAdapter {
   messages: Array<{ chatId: string; text: string; messageId: string }> = [];
   edits: Array<{ chatId: string; text: string; messageId: string }> = [];
   syncedCommands: Array<{ chatId: string; commands: readonly ChatCommandDefinition[] }> = [];
-  workspacePickers: Array<{ chatId: string; options: readonly WorkspacePickerOption[] }> = [];
+  selectionPickers: Array<{ chatId: string; picker: SelectionPicker }> = [];
   typingSignals: string[] = [];
   pendingPermissionRequests: PendingPermissionRequest[] = [];
   private nextMessageId = 1;
@@ -83,8 +83,8 @@ class MockChannelAdapter implements ChannelAdapter {
     this.syncedCommands.push({ chatId, commands });
   }
 
-  async showWorkspacePicker(chatId: string, options: readonly WorkspacePickerOption[]): Promise<void> {
-    this.workspacePickers.push({ chatId, options });
+  async showSelectionPicker(chatId: string, picker: SelectionPicker): Promise<void> {
+    this.selectionPickers.push({ chatId, picker });
   }
 
   async requestPermission(
@@ -137,6 +137,22 @@ class MockChannelAdapter implements ChannelAdapter {
   clearMessages(): void {
     this.messages.length = 0;
     this.edits.length = 0;
+  }
+
+  async pressSelection(action: SelectionPicker["action"], optionId: string): Promise<void> {
+    if (!this.handler) {
+      throw new Error("No handler registered");
+    }
+
+    await this.handler({
+      platform: "telegram",
+      chatId: "1001",
+      userId: "2002",
+      messageId: String(this.messages.length + 1),
+      text: `/${action} ${optionId}`,
+      isCommand: true,
+      timestamp: Date.now(),
+    });
   }
 
   resolveNextPermission(decision: ToolPermissionDecision): void {
@@ -365,20 +381,17 @@ describe("ChatOrchestrator + ACP integration", () => {
     await waitFor(() => adapter.syncedCommands.length >= 2);
 
     expect(adapter.syncedCommands.at(-1)).toEqual({
-      chatId: "1001",
-      commands: [
-        { name: "agents", description: "List configured agents" },
-        { name: "agent", description: "Switch the active agent" },
-        { name: "workspace", description: "Switch the active workspace" },
-        { name: "new", description: "Create a new ACP session" },
-        { name: "modes", description: "List selectable modes for the active session" },
-        { name: "mode", description: "Set the mode for the active session" },
-        { name: "models", description: "List selectable models for the active session" },
-        { name: "model", description: "Set the model for the active session" },
-        { name: "status", description: "Show current chat state" },
-        { name: "cancel", description: "Cancel the active turn" },
-        { name: "fake:explain", description: "Explain the selected code or text." },
-        { name: "fake:summarize", description: "Summarize the latest context." },
+        chatId: "1001",
+        commands: [
+          { name: "agents", description: "List configured agents" },
+          { name: "workspace", description: "Switch the active workspace" },
+          { name: "new", description: "Create a new ACP session" },
+          { name: "modes", description: "List selectable modes for the active session" },
+          { name: "models", description: "List selectable models for the active session" },
+          { name: "status", description: "Show current chat state" },
+          { name: "cancel", description: "Cancel the active turn" },
+          { name: "fake:explain", description: "Explain the selected code or text." },
+          { name: "fake:summarize", description: "Summarize the latest context." },
       ],
     });
   });
@@ -410,14 +423,18 @@ describe("ChatOrchestrator + ACP integration", () => {
   it("shows a workspace picker with configured workspace ids", async () => {
     await adapter.emit("/workspace");
 
-    expect(adapter.workspacePickers).toEqual([
+    expect(adapter.selectionPickers).toEqual([
       {
         chatId: "1001",
-        options: [
-          { id: DEFAULT_WORKSPACE_ID, path: workspaceRoot, selected: false },
-          { id: "repo", path: path.join(workspaceRoot, "repo"), selected: true },
-          { id: "alt", path: path.join(workspaceRoot, "alt"), selected: false },
-        ],
+        picker: {
+          action: "workspace",
+          title: "Select a workspace for the next session. Current: repo",
+          options: [
+            { id: DEFAULT_WORKSPACE_ID, label: DEFAULT_WORKSPACE_ID, description: workspaceRoot, selected: false },
+            { id: "repo", label: "repo", description: path.join(workspaceRoot, "repo"), selected: true },
+            { id: "alt", label: "alt", description: path.join(workspaceRoot, "alt"), selected: false },
+          ],
+        },
       },
     ]);
   });
@@ -449,27 +466,38 @@ describe("ChatOrchestrator + ACP integration", () => {
 
   it("lists selectable modes for the active session", async () => {
     await adapter.emit("/new");
-    adapter.clearMessages();
+    adapter.selectionPickers.length = 0;
 
     await adapter.emit("/modes");
 
-    expect(adapter.messages.at(-1)?.text).toContain("Current mode: read-only");
-    expect(adapter.messages.at(-1)?.text).toContain("* read-only (Read Only)");
-    expect(adapter.messages.at(-1)?.text).toContain("auto (Default)");
-    expect(adapter.messages.at(-1)?.text).toContain("full-access (Full Access)");
+    expect(adapter.selectionPickers.at(-1)).toEqual({
+      chatId: "1001",
+      picker: {
+        action: "mode",
+        title: "Select a mode. Current: read-only",
+        options: [
+          { id: "read-only", label: "read-only", description: "Read Only", selected: true },
+          { id: "auto", label: "auto", description: "Default", selected: false },
+          { id: "full-access", label: "full-access", description: "Full Access", selected: false },
+        ],
+      },
+    });
   });
 
-  it("switches the active session mode", async () => {
+  it("switches the active session mode from picker selection", async () => {
     await adapter.emit("/new");
     adapter.clearMessages();
 
-    await adapter.emit("/mode auto");
+    await adapter.pressSelection("mode", "auto");
     expect(adapter.messages.at(-1)?.text).toContain("Mode switched to 'auto'");
 
-    adapter.clearMessages();
+    adapter.selectionPickers.length = 0;
     await adapter.emit("/modes");
-    expect(adapter.messages.at(-1)?.text).toContain("Current mode: auto");
-    expect(adapter.messages.at(-1)?.text).toContain("* auto (Default)");
+    expect(adapter.selectionPickers.at(-1)?.picker.options).toEqual([
+      { id: "read-only", label: "read-only", description: "Read Only", selected: false },
+      { id: "auto", label: "auto", description: "Default", selected: true },
+      { id: "full-access", label: "full-access", description: "Full Access", selected: false },
+    ]);
 
     adapter.clearMessages();
     await adapter.emit("please report mode");
@@ -532,20 +560,17 @@ describe("ChatOrchestrator + ACP integration", () => {
     await waitFor(() => adapter.syncedCommands.length >= 2);
 
     adapter.syncedCommands.length = 0;
-    await adapter.emit("/agent fake");
+    await adapter.pressSelection("agent", "fake");
 
     expect(adapter.syncedCommands).toEqual([
       {
         chatId: "1001",
         commands: [
           { name: "agents", description: "List configured agents" },
-          { name: "agent", description: "Switch the active agent" },
           { name: "workspace", description: "Switch the active workspace" },
           { name: "new", description: "Create a new ACP session" },
           { name: "modes", description: "List selectable modes for the active session" },
-          { name: "mode", description: "Set the mode for the active session" },
           { name: "models", description: "List selectable models for the active session" },
-          { name: "model", description: "Set the model for the active session" },
           { name: "status", description: "Show current chat state" },
           { name: "cancel", description: "Cancel the active turn" },
         ],
@@ -555,26 +580,36 @@ describe("ChatOrchestrator + ACP integration", () => {
 
   it("lists selectable models for the active session", async () => {
     await adapter.emit("/new");
-    adapter.clearMessages();
+    adapter.selectionPickers.length = 0;
 
     await adapter.emit("/models");
 
-    expect(adapter.messages.at(-1)?.text).toContain("Current model: gpt-5");
-    expect(adapter.messages.at(-1)?.text).toContain("* gpt-5 (GPT-5)");
-    expect(adapter.messages.at(-1)?.text).toContain("gpt-5-mini (GPT-5 Mini)");
+    expect(adapter.selectionPickers.at(-1)).toEqual({
+      chatId: "1001",
+      picker: {
+        action: "model",
+        title: "Select a model. Current: gpt-5",
+        options: [
+          { id: "gpt-5", label: "gpt-5", description: "GPT-5", selected: true },
+          { id: "gpt-5-mini", label: "gpt-5-mini", description: "GPT-5 Mini", selected: false },
+        ],
+      },
+    });
   });
 
-  it("switches the active session model", async () => {
+  it("switches the active session model from picker selection", async () => {
     await adapter.emit("/new");
     adapter.clearMessages();
 
-    await adapter.emit("/model gpt-5-mini");
+    await adapter.pressSelection("model", "gpt-5-mini");
     expect(adapter.messages.at(-1)?.text).toContain("Model switched to 'gpt-5-mini'");
 
-    adapter.clearMessages();
+    adapter.selectionPickers.length = 0;
     await adapter.emit("/models");
-    expect(adapter.messages.at(-1)?.text).toContain("Current model: gpt-5-mini");
-    expect(adapter.messages.at(-1)?.text).toContain("* gpt-5-mini (GPT-5 Mini)");
+    expect(adapter.selectionPickers.at(-1)?.picker.options).toEqual([
+      { id: "gpt-5", label: "gpt-5", description: "GPT-5", selected: false },
+      { id: "gpt-5-mini", label: "gpt-5-mini", description: "GPT-5 Mini", selected: true },
+    ]);
 
     adapter.clearMessages();
     await adapter.emit("please report model");

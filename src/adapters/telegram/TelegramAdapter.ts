@@ -21,7 +21,8 @@ import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import type {
   ChannelAdapter,
   OutboundMessageHandle,
-  WorkspacePickerOption,
+  SelectionPicker,
+  SelectionPickerAction,
 } from "../../core/channel/ChannelAdapter.js";
 import type { MessageEnvelope } from "../../core/channel/MessageEnvelope.js";
 import type { ToolPermissionDecision, ToolPermissionRequest } from "../../core/channel/PermissionRequest.js";
@@ -36,7 +37,7 @@ import {
 
 let globalProxyConfigured = false;
 const PERMISSION_ACTION_ID = "hermes_permission";
-const WORKSPACE_ACTION_ID = "hermes_workspace";
+const SELECTION_ACTION_ID = "hermes_selection";
 
 function resolveProxyUrl(): string | undefined {
   return (
@@ -146,15 +147,39 @@ function renderPermissionCard(toolText: string, actions: ButtonElement[]): CardE
   });
 }
 
-function renderWorkspacePickerCard(options: readonly WorkspacePickerOption[]): CardElement {
+function encodeSelectionValue(action: SelectionPickerAction, optionId: string): string {
+  return JSON.stringify([action, optionId]);
+}
+
+function decodeSelectionValue(value: string): { action: SelectionPickerAction; optionId: string } | null {
+  try {
+    const parsed = JSON.parse(value) as [unknown, unknown];
+    const [action, optionId] = parsed;
+    if (
+      (action === "workspace" || action === "agent" || action === "mode" || action === "model")
+      && typeof optionId === "string"
+    ) {
+      return { action, optionId };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function renderSelectionPickerCard(picker: SelectionPicker): CardElement {
   const lines = [
-    "Select a workspace for the next session:",
-    ...options.map((option) => `${option.id} - ${option.path}${option.selected ? " current" : ""}`),
+    picker.title,
+    ...picker.options.map((option) => {
+      const suffix = option.description ? ` - ${option.description}` : "";
+      const selectedLabel = option.selected ? " (current)" : "";
+      return `${option.label}${selectedLabel}${suffix}`;
+    }),
   ];
-  const actions = options.map((option) => Button({
-    id: WORKSPACE_ACTION_ID,
-    value: option.id,
-    label: option.id,
+  const actions = picker.options.map((option) => Button({
+    id: SELECTION_ACTION_ID,
+    value: encodeSelectionValue(picker.action, option.id),
+    label: option.label,
     style: option.selected ? "primary" : "default",
   }));
 
@@ -220,8 +245,8 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.onAction(PERMISSION_ACTION_ID, async (event) => {
       await this.handlePermissionAction(event);
     });
-    this.bot.onAction(WORKSPACE_ACTION_ID, async (event) => {
-      await this.handleWorkspaceAction(event);
+    this.bot.onAction(SELECTION_ACTION_ID, async (event) => {
+      await this.handleSelectionAction(event);
     });
   }
 
@@ -290,8 +315,8 @@ export class TelegramAdapter implements ChannelAdapter {
     });
   }
 
-  async showWorkspacePicker(chatId: string, options: readonly WorkspacePickerOption[]): Promise<void> {
-    await this.telegram.postMessage(this.toThreadId(chatId), renderWorkspacePickerCard(options));
+  async showSelectionPicker(chatId: string, picker: SelectionPicker): Promise<void> {
+    await this.telegram.postMessage(this.toThreadId(chatId), renderSelectionPickerCard(picker));
   }
 
   async requestPermission(
@@ -451,9 +476,13 @@ export class TelegramAdapter implements ChannelAdapter {
     );
   }
 
-  private async handleWorkspaceAction(event: ActionEvent): Promise<void> {
-    const workspaceId = event.value?.trim();
-    if (!workspaceId || !this.onMessageHandler) {
+  private async handleSelectionAction(event: ActionEvent): Promise<void> {
+    if (!event.value || !this.onMessageHandler) {
+      return;
+    }
+
+    const selection = decodeSelectionValue(event.value);
+    if (!selection) {
       return;
     }
 
@@ -463,7 +492,7 @@ export class TelegramAdapter implements ChannelAdapter {
       chatId,
       userId: event.user.userId,
       messageId: event.messageId,
-      text: `/workspace ${workspaceId}`,
+      text: `/${selection.action} ${selection.optionId}`,
       isCommand: true,
       timestamp: Date.now(),
     });

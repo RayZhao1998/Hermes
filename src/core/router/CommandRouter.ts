@@ -5,25 +5,29 @@ export interface ChatCommandDefinition {
 
 export const commandDefinitions = [
   { name: "agents", description: "List configured agents" },
-  { name: "agent", description: "Switch the active agent" },
   { name: "workspace", description: "Switch the active workspace" },
   { name: "new", description: "Create a new ACP session" },
   { name: "modes", description: "List selectable modes for the active session" },
-  { name: "mode", description: "Set the mode for the active session" },
   { name: "models", description: "List selectable models for the active session" },
-  { name: "model", description: "Set the model for the active session" },
   { name: "status", description: "Show current chat state" },
   { name: "cancel", description: "Cancel the active turn" },
 ] as const satisfies readonly ChatCommandDefinition[];
 
-export type CommandName = (typeof commandDefinitions)[number]["name"];
+const hiddenCommandNames = ["agent", "mode", "model"] as const;
+
+export type CommandName =
+  | (typeof commandDefinitions)[number]["name"]
+  | (typeof hiddenCommandNames)[number];
 
 export interface ParsedCommand {
   name: CommandName;
   args: string[];
 }
 
-const supportedCommands: ReadonlySet<string> = new Set(commandDefinitions.map(({ name }) => name));
+const supportedCommands: ReadonlySet<string> = new Set([
+  ...commandDefinitions.map(({ name }) => name),
+  ...hiddenCommandNames,
+]);
 const aliases = new Map<string, CommandName>([["session", "new"]]);
 
 export function mergeCommandDefinitions(extraCommands: readonly ChatCommandDefinition[]): ChatCommandDefinition[] {
