@@ -13,6 +13,9 @@ import type {
   PromptRequest,
   PromptResponse,
   SessionConfigOption,
+  SessionModeState,
+  SetSessionModeRequest,
+  SetSessionModeResponse,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
@@ -21,12 +24,36 @@ import { Readable, Writable } from "node:stream";
 
 interface SessionState {
   abortController?: AbortController;
+  currentModeId: string;
   currentModelId: string;
   cwd: string;
   mcpServers: NewSessionRequest["mcpServers"];
 }
 
 const MODEL_CONFIG_ID = "model";
+
+function buildModeState(currentModeId: string): SessionModeState {
+  return {
+    currentModeId,
+    availableModes: [
+      {
+        id: "read-only",
+        name: "Read Only",
+        description: "Read files only; edits and network need approval.",
+      },
+      {
+        id: "auto",
+        name: "Default",
+        description: "Workspace write access with approval outside the workspace.",
+      },
+      {
+        id: "full-access",
+        name: "Full Access",
+        description: "Unrestricted filesystem and network access.",
+      },
+    ],
+  };
+}
 
 function buildConfigOptions(currentModelId: string): SessionConfigOption[] {
   return [
@@ -73,6 +100,7 @@ class FakeAgent implements Agent {
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomUUID();
     this.sessions.set(sessionId, {
+      currentModeId: "read-only",
       currentModelId: "gpt-5",
       cwd: params.cwd,
       mcpServers: params.mcpServers,
@@ -95,8 +123,32 @@ class FakeAgent implements Agent {
     });
     return {
       sessionId,
+      modes: buildModeState("read-only"),
       configOptions: buildConfigOptions("gpt-5"),
     };
+  }
+
+  async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
+    const session = this.sessions.get(params.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session ${params.sessionId}`);
+    }
+
+    const allowedModeIds = new Set(["read-only", "auto", "full-access"]);
+    if (!allowedModeIds.has(params.modeId)) {
+      throw new Error(`Unknown mode ${params.modeId}`);
+    }
+
+    session.currentModeId = params.modeId;
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "current_mode_update",
+        currentModeId: session.currentModeId,
+      },
+    });
+
+    return {};
   }
 
   async setSessionConfigOption(params: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> {
@@ -187,6 +239,19 @@ class FakeAgent implements Agent {
           content: {
             type: "text",
             text: ` [model:${session.currentModelId}]`,
+          },
+        },
+      });
+    }
+
+    if (text.toLowerCase().includes("report mode")) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: ` [mode:${session.currentModeId}]`,
           },
         },
       });

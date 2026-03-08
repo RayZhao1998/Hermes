@@ -8,6 +8,8 @@ export const commandDefinitions = [
   { name: "agent", description: "Switch the active agent" },
   { name: "workspace", description: "Switch the active workspace" },
   { name: "new", description: "Create a new ACP session" },
+  { name: "modes", description: "List selectable modes for the active session" },
+  { name: "mode", description: "Set the mode for the active session" },
   { name: "models", description: "List selectable models for the active session" },
   { name: "model", description: "Set the model for the active session" },
   { name: "status", description: "Show current chat state" },

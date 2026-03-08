@@ -148,7 +148,7 @@ function renderPermissionCard(toolText: string, actions: ButtonElement[]): CardE
 
 function renderWorkspacePickerCard(options: readonly WorkspacePickerOption[]): CardElement {
   const lines = [
-    "Select a workspace for the next /new session:",
+    "Select a workspace for the next session:",
     ...options.map((option) => `${option.id} - ${option.path}${option.selected ? " current" : ""}`),
   ];
   const actions = options.map((option) => Button({

@@ -8,6 +8,8 @@ describe("CommandRouter", () => {
     expect(router.parse("/new")).toEqual({ name: "new", args: [] });
     expect(router.parse("/agent codex")).toEqual({ name: "agent", args: ["codex"] });
     expect(router.parse("/workspace hermes")).toEqual({ name: "workspace", args: ["hermes"] });
+    expect(router.parse("/modes")).toEqual({ name: "modes", args: [] });
+    expect(router.parse("/mode auto")).toEqual({ name: "mode", args: ["auto"] });
     expect(router.parse("/models")).toEqual({ name: "models", args: [] });
     expect(router.parse("/model gpt-5")).toEqual({ name: "model", args: ["gpt-5"] });
   });

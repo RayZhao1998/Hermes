@@ -80,6 +80,7 @@ const botBaseSchema = z.object({
   id: z.string().min(1),
   profileId: z.string().min(1),
   defaultWorkspaceId: z.string().min(1).default(DEFAULT_WORKSPACE_ID),
+  defaultMode: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
   access: accessControlSchema,
 }).strict();
@@ -270,6 +271,7 @@ interface LoadedBotConfigBase {
   id: string;
   profileId: string;
   defaultWorkspaceId: string;
+  defaultMode?: string;
   enabled: boolean;
   access: AccessControlConfig;
   profile: LoadedProfileConfig;

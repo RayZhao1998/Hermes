@@ -83,6 +83,7 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
         workspaces: config.workspaces,
         defaultWorkspaceId: bot.defaultWorkspaceId,
         accessControl: bot.access,
+        defaultMode: bot.defaultMode,
         outputMode: bot.profile.outputMode,
         toolApprovalMode: bot.profile.tools.approvalMode,
         logger: logger.child({ component: "orchestrator", botId: bot.id, profileId: bot.profileId }),

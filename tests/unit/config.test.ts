@@ -22,7 +22,7 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `app:\n  logLevel: info\nagents:\n  - id: a\n    command: echo\n    args: ["ok"]\n    env: {}\n  - id: b\n    command: printf\n    args: []\n    env: {}\nworkspaces:\n  - id: repo\n    path: ${dir}\nmcpServers:\n  - name: filesystem\n    command: npx\n    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]\n    env:\n      - name: NODE_ENV\n        value: test\n  - type: http\n    name: docs\n    url: https://mcp.example.com\n    headers:\n      - name: Authorization\n        value: Bearer token\nprofiles:\n  - id: personal\n    defaultAgentId: a\n    enabledAgentIds: [a]\n    mcpServerNames: [filesystem, docs]\n    outputMode: text_only\n    tools:\n      approvalMode: auto\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: personal\n    defaultWorkspaceId: repo\n    access:\n      allowChats: ["telegram:1"]\n      allowUsers: ["telegram:2"]\n    adapter:\n      token: abc\n      mode: polling\n`,
+      `app:\n  logLevel: info\nagents:\n  - id: a\n    command: echo\n    args: ["ok"]\n    env: {}\n  - id: b\n    command: printf\n    args: []\n    env: {}\nworkspaces:\n  - id: repo\n    path: ${dir}\nmcpServers:\n  - name: filesystem\n    command: npx\n    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]\n    env:\n      - name: NODE_ENV\n        value: test\n  - type: http\n    name: docs\n    url: https://mcp.example.com\n    headers:\n      - name: Authorization\n        value: Bearer token\nprofiles:\n  - id: personal\n    defaultAgentId: a\n    enabledAgentIds: [a]\n    mcpServerNames: [filesystem, docs]\n    outputMode: text_only\n    tools:\n      approvalMode: auto\nbots:\n  - id: tg-main\n    channel: telegram\n    profileId: personal\n    defaultWorkspaceId: repo\n    defaultMode: auto\n    access:\n      allowChats: ["telegram:1"]\n      allowUsers: ["telegram:2"]\n    adapter:\n      token: abc\n      mode: polling\n`,
       "utf8",
     );
 
@@ -41,6 +41,7 @@ describe("config loading", () => {
     ]);
     expect(loaded.bots[0]?.channel).toBe("telegram");
     expect(loaded.bots[0]?.defaultWorkspaceId).toBe("repo");
+    expect(loaded.bots[0]?.defaultMode).toBe("auto");
     expect(loaded.bots[0]?.profile.id).toBe("personal");
     expect(loaded.bots[0]?.access).toEqual({
       allowChats: ["telegram:1"],
@@ -153,6 +154,7 @@ describe("config loading", () => {
     expect(parsed.profiles[0]?.outputMode).toBe("full");
     expect(parsed.profiles[0]?.tools.approvalMode).toBe("auto");
     expect(parsed.bots[0]?.defaultWorkspaceId).toBe(DEFAULT_WORKSPACE_ID);
+    expect(parsed.bots[0]?.defaultMode).toBeUndefined();
     expect(parsed.bots[0]?.enabled).toBe(true);
     expect(parsed.bots[0]?.access).toEqual({ allowChats: [], allowUsers: [] });
   });

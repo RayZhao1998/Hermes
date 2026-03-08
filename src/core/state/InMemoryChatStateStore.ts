@@ -58,6 +58,14 @@ export class InMemoryChatStateStore {
     return state;
   }
 
+  clearSession(chatKey: string): ChatState {
+    const state = this.require(chatKey);
+    state.sessionId = undefined;
+    state.activeTurnId = undefined;
+    state.availableCommands = [];
+    return state;
+  }
+
   setActiveTurn(chatKey: string, turnId?: string): ChatState {
     const state = this.require(chatKey);
     state.activeTurnId = turnId;

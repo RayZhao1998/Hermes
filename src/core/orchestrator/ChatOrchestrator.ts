@@ -17,11 +17,11 @@ import { InMemoryChatStateStore } from "../state/InMemoryChatStateStore.js";
 import type { AccessControlConfig } from "../security/isAuthorized.js";
 import { isAuthorizedMessage } from "../security/isAuthorized.js";
 import { AgentProcessManager } from "../acp/AgentProcessManager.js";
-import type { SessionModelSelection } from "../acp/ACPClient.js";
+import type { SessionModeSelection, SessionModelSelection } from "../acp/ACPClient.js";
 import { extractAvailableCommands } from "../acp/ACPClient.js";
 
 const UNAUTHORIZED_TEXT = "Unauthorized. This chat is not allowed to control Hermes.";
-const NO_SESSION_TEXT = "No active session. Run /new first.";
+const NO_SESSION_TEXT = "No active session yet. Send a message to start one automatically.";
 const BUSY_TEXT = "A turn is already in progress. Use /cancel to interrupt it.";
 const TYPING_REFRESH_MS = 4000;
 const PROMPT_TURN_SETTLE_MS = 50;
@@ -263,6 +263,20 @@ function formatModelSelection(selection: SessionModelSelection): string {
   return [`Current model: ${selection.currentModelId}`, "Selectable models:", ...rows].join("\n");
 }
 
+function formatModeSelection(selection: SessionModeSelection): string {
+  if (selection.modes.length === 0) {
+    return "Selectable modes:\n(none)";
+  }
+
+  const rows = selection.modes.map((mode) => {
+    const marker = mode.id === selection.currentModeId ? "*" : " ";
+    const suffix = mode.description ? ` - ${mode.description}` : "";
+    return `${marker} ${mode.id} (${mode.name})${suffix}`;
+  });
+
+  return [`Current mode: ${selection.currentModeId}`, "Selectable modes:", ...rows].join("\n");
+}
+
 function formatWorkspaceList(workspaces: readonly LoadedWorkspaceConfig[], activeWorkspaceId: string): string {
   return workspaces.map((workspace) => {
     const marker = workspace.id === activeWorkspaceId ? "*" : " ";
@@ -278,6 +292,7 @@ export interface ChatOrchestratorOptions {
   workspaces: LoadedWorkspaceConfig[];
   defaultWorkspaceId: string;
   accessControl: AccessControlConfig;
+  defaultMode?: string;
   outputMode: OutputMode;
   toolApprovalMode: ToolApprovalMode;
   logger: Logger;
@@ -292,6 +307,7 @@ export class ChatOrchestrator {
   private readonly orderedWorkspaces: LoadedWorkspaceConfig[];
   private readonly defaultWorkspaceId: string;
   private readonly accessControl: AccessControlConfig;
+  private readonly defaultMode?: string;
   private readonly outputMode: OutputMode;
   private readonly toolApprovalMode: ToolApprovalMode;
   private readonly logger: Logger;
@@ -307,6 +323,7 @@ export class ChatOrchestrator {
     this.workspacesById = new Map(options.workspaces.map((workspace) => [workspace.id, workspace]));
     this.defaultWorkspaceId = options.defaultWorkspaceId;
     this.accessControl = options.accessControl;
+    this.defaultMode = options.defaultMode;
     this.outputMode = options.outputMode;
     this.toolApprovalMode = options.toolApprovalMode;
     this.logger = options.logger;
@@ -353,6 +370,7 @@ export class ChatOrchestrator {
       syncCommands: false,
       enablePermissionRequests: false,
     });
+    await this.applyDefaultModeIfConfigured(client, sessionId);
 
     binding.activeTurn = {
       turnId,
@@ -420,6 +438,7 @@ export class ChatOrchestrator {
         text: promptText,
       },
       state.activeAgentId,
+      state.activeWorkspaceId,
       state.sessionId,
       state.activeTurnId,
     );
@@ -459,7 +478,10 @@ export class ChatOrchestrator {
         this.releaseSessionBinding(chatKey);
         this.stateStore.setActiveAgent(chatKey, agentId);
         await this.syncCommands(chatKey, message.chatId);
-        await this.channel.sendMessage(message.chatId, `Active agent switched to '${agentId}'. Session reset; run /new.`);
+        await this.channel.sendMessage(
+          message.chatId,
+          `Active agent switched to '${agentId}'. A new session will be created automatically on your next message.`,
+        );
         return;
       }
       case "workspace": {
@@ -517,7 +539,11 @@ export class ChatOrchestrator {
         await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(
           message.chatId,
-          `Workspace switched to '${workspace.id}'.\nPath: ${workspace.path}\nSession reset; run /new.`,
+          [
+            `Workspace switched to '${workspace.id}'.`,
+            `Path: ${workspace.path}`,
+            "A new session will be created automatically on your next message.",
+          ].join("\n"),
         );
         return;
       }
@@ -527,22 +553,75 @@ export class ChatOrchestrator {
           return;
         }
 
-        const workspace = this.requireWorkspace(state.activeWorkspaceId);
-        const client = await this.agentManager.getClient(state.activeAgentId);
-        const sessionId = await client.newSession(
-          workspace.path,
-          this.agentManager.getAgentMcpServers(state.activeAgentId),
+        const { workspace, sessionId } = await this.createChatSession(
+          chatKey,
+          message.chatId,
+          state.activeAgentId,
+          state.activeWorkspaceId,
         );
-        this.stateStore.setSession(chatKey, sessionId);
-        await this.bindSession(chatKey, message.chatId, state.activeAgentId, sessionId, {
-          stateKey: chatKey,
-          syncCommands: true,
-          enablePermissionRequests: this.toolApprovalMode === "manual",
-        });
-        await this.syncCommands(chatKey, message.chatId);
         await this.channel.sendMessage(
           message.chatId,
           `Session created.\nAgent: ${state.activeAgentId}\nWorkspace: ${workspace.id}\nSession ID: ${sessionId}`,
+        );
+        return;
+      }
+      case "modes": {
+        if (!state.sessionId) {
+          await this.channel.sendMessage(message.chatId, NO_SESSION_TEXT);
+          return;
+        }
+
+        const client = await this.agentManager.getClient(state.activeAgentId);
+        const selection = client.getModeSelection(state.sessionId);
+        if (!selection) {
+          await this.channel.sendMessage(
+            message.chatId,
+            "Active agent does not expose selectable modes for this session.",
+          );
+          return;
+        }
+
+        await this.channel.sendMessage(message.chatId, formatModeSelection(selection));
+        return;
+      }
+      case "mode": {
+        if (!state.sessionId) {
+          await this.channel.sendMessage(message.chatId, NO_SESSION_TEXT);
+          return;
+        }
+        if (state.activeTurnId) {
+          await this.channel.sendMessage(message.chatId, BUSY_TEXT);
+          return;
+        }
+
+        const modeId = command.args[0];
+        if (!modeId) {
+          await this.channel.sendMessage(message.chatId, "Usage: /mode <id>");
+          return;
+        }
+
+        const client = await this.agentManager.getClient(state.activeAgentId);
+        const selection = client.getModeSelection(state.sessionId);
+        if (!selection) {
+          await this.channel.sendMessage(
+            message.chatId,
+            "Active agent does not expose selectable modes for this session.",
+          );
+          return;
+        }
+
+        if (!selection.modes.some((mode) => mode.id === modeId)) {
+          await this.channel.sendMessage(
+            message.chatId,
+            `Unknown mode '${modeId}'. Run /modes to list available options.`,
+          );
+          return;
+        }
+
+        const updated = await client.setMode(state.sessionId, modeId);
+        await this.channel.sendMessage(
+          message.chatId,
+          `Mode switched to '${updated.currentModeId}'.`,
         );
         return;
       }
@@ -610,6 +689,7 @@ export class ChatOrchestrator {
         const workspace = this.requireWorkspace(state.activeWorkspaceId);
         const mcpServers = this.agentManager.getAgentMcpServers(state.activeAgentId);
         const client = await this.agentManager.getClient(state.activeAgentId);
+        const modeSelection = state.sessionId ? client.getModeSelection(state.sessionId) : null;
         const modelSelection = state.sessionId ? client.getModelSelection(state.sessionId) : null;
         await this.channel.sendMessage(
           message.chatId,
@@ -617,6 +697,7 @@ export class ChatOrchestrator {
             `Agent: ${state.activeAgentId}`,
             `Workspace: ${workspace.id} (${workspace.path})`,
             `Session: ${state.sessionId ?? "(none)"}`,
+            `Mode: ${modeSelection?.currentModeId ?? this.defaultMode ?? "(not available)"}`,
             `Model: ${modelSelection?.currentModelId ?? "(not available)"}`,
             `Turn: ${state.activeTurnId ?? "idle"}`,
             `MCP servers: ${formatMcpServers(mcpServers)}`,
@@ -649,22 +730,28 @@ export class ChatOrchestrator {
     chatKey: string,
     message: MessageEnvelope,
     activeAgentId: string,
+    activeWorkspaceId: string,
     sessionId?: string,
     activeTurnId?: string,
   ): Promise<void> {
-    if (!sessionId) {
-      await this.channel.sendMessage(message.chatId, NO_SESSION_TEXT);
-      return;
-    }
-
     if (activeTurnId) {
       await this.channel.sendMessage(message.chatId, BUSY_TEXT);
       return;
     }
 
+    let ensuredSessionId = sessionId;
+    if (!ensuredSessionId) {
+      const created = await this.createChatSession(
+        chatKey,
+        message.chatId,
+        activeAgentId,
+        activeWorkspaceId,
+      );
+      ensuredSessionId = created.sessionId;
+    }
     const turnId = `${Date.now()}-${message.messageId}`;
     this.stateStore.setActiveTurn(chatKey, turnId);
-    const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, sessionId, {
+    const sessionBinding = await this.bindSession(chatKey, message.chatId, activeAgentId, ensuredSessionId, {
       stateKey: chatKey,
       syncCommands: true,
       enablePermissionRequests: this.toolApprovalMode === "manual",
@@ -681,12 +768,15 @@ export class ChatOrchestrator {
 
     try {
       await this.setTypingIfSupported(message.chatId);
-      await client.prompt(sessionId, message.text);
+      await client.prompt(ensuredSessionId, message.text);
       await this.waitForPendingSessionUpdates(sessionBinding);
       await this.finalizeTurn(message.chatId, sessionBinding);
     } catch (error) {
       const err = error instanceof Error ? error.message : String(error);
-      this.logger.error({ error: err, chatKey, sessionId, agentId: activeAgentId }, "Prompt execution failed");
+      this.logger.error(
+        { error: err, chatKey, sessionId: ensuredSessionId, agentId: activeAgentId },
+        "Prompt execution failed",
+      );
       await this.channel.sendMessage(message.chatId, `Prompt failed: ${err}`);
     } finally {
       if (sessionBinding.activeTurn?.turnId === turnId) {
@@ -811,6 +901,35 @@ export class ChatOrchestrator {
       this.stateStore.setAvailableCommands(binding.stateKey, client.getAvailableCommands(sessionId));
     }
     return binding;
+  }
+
+  private async createChatSession(
+    chatKey: string,
+    chatId: string,
+    agentId: string,
+    workspaceId: string,
+  ): Promise<{ workspace: LoadedWorkspaceConfig; sessionId: string }> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const client = await this.agentManager.getClient(agentId);
+    const sessionId = await client.newSession(
+      workspace.path,
+      this.agentManager.getAgentMcpServers(agentId),
+    );
+    this.stateStore.setSession(chatKey, sessionId);
+    try {
+      await this.bindSession(chatKey, chatId, agentId, sessionId, {
+        stateKey: chatKey,
+        syncCommands: true,
+        enablePermissionRequests: this.toolApprovalMode === "manual",
+      });
+      await this.applyDefaultModeIfConfigured(client, sessionId);
+    } catch (error) {
+      this.releaseSessionBinding(chatKey);
+      this.stateStore.clearSession(chatKey);
+      throw error;
+    }
+    await this.syncCommands(chatKey, chatId);
+    return { workspace, sessionId };
   }
 
   private releaseSessionBinding(chatKey: string): void {
@@ -946,6 +1065,34 @@ export class ChatOrchestrator {
     binding.activeTurn.hasVisibleOutput = true;
 
     binding.activeTurn.toolCalls.set(event.toolCallId, toolCall);
+  }
+
+  private async applyDefaultModeIfConfigured(
+    client: Awaited<ReturnType<AgentProcessManager["getClient"]>>,
+    sessionId: string,
+  ): Promise<void> {
+    if (!this.defaultMode) {
+      return;
+    }
+
+    const selection = client.getModeSelection(sessionId);
+    if (!selection) {
+      throw new Error(
+        `Active agent does not expose selectable modes, but bot defaultMode is set to '${this.defaultMode}'.`,
+      );
+    }
+
+    if (!selection.modes.some((mode) => mode.id === this.defaultMode)) {
+      throw new Error(
+        `Unknown default mode '${this.defaultMode}'. Available modes: ${selection.modes.map((mode) => mode.id).join(", ") || "(none)"}.`,
+      );
+    }
+
+    if (selection.currentModeId === this.defaultMode) {
+      return;
+    }
+
+    await client.setMode(sessionId, this.defaultMode);
   }
 
   private async waitForPendingSessionUpdates(binding: SessionBinding): Promise<void> {

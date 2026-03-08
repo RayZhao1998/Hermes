@@ -35,7 +35,7 @@ Hermes 会把兼容 ACP 的 agent 变成一个类似 OpenClaw 的个人助理，
 ### Telegram 细节
 
 - Bot 传输层运行在 polling 模式。
-- Hermes 会同步 `/agents`、`/agent`、`/new`、`/models`、`/model`、`/status`、`/cancel` 等内置命令。
+- Hermes 会同步 `/agents`、`/agent`、`/new`、`/modes`、`/mode`、`/models`、`/model`、`/status`、`/cancel` 等内置命令。
 - ACP 命令会以 `/<agent-id>:<command>` 的形式加命名空间，避免冲突。
 - 当 Telegram 命令命名规则不允许 `:` 时，Hermes 会额外发布 `__` 别名，例如 `/codex__logout`。
 - 手动工具审批通过 Telegram action button 完成。
@@ -77,7 +77,7 @@ Hermes 内置了默认工作区 `~/.hermes/workspace`。
 - `workspaces` 描述具名工作区，配置 `id` 和绝对路径，聊天会话可以在 Telegram 中切换
 - `mcpServers` 描述可复用的 MCP server 定义，通过 `name` 引用
 - `profiles` 描述可复用的运行配置，例如 `defaultAgentId`、启用的 agent、MCP server、输出模式和工具审批模式
-- `bots` 描述实际接入的聊天 bot 实例，包括 `channel`、`profileId`、`defaultWorkspaceId`、bot 自己的 `access` 和适配器凭据
+- `bots` 描述实际接入的聊天 bot 实例，包括 `channel`、`profileId`、`defaultWorkspaceId`、可选的 `defaultMode`、bot 自己的 `access` 和适配器凭据
 - Hermes 会让 ACP agent 进程从 `~/.hermes/workspace` 启动，因此 `cwd` 不属于 agent 配置的一部分
 - 每个聊天会话都可以通过 `/workspace` 切换当前工作区，新的 session 会在选中的工作区中启动
 
@@ -102,6 +102,8 @@ cp -R ~/.openclaw/workspace/. ~/.hermes/workspace/
 - `/agent <id>` 切换当前聊天会话的活跃 agent
 - `/workspace` 打开工作区选择器，并切换当前聊天会话的工作区
 - `/new` 创建新的 ACP session
+- `/modes` 查看当前 session 暴露的模式
+- `/mode <id>` 切换当前模式
 - `/models` 查看当前 session 暴露的模型
 - `/model <id>` 切换当前模型
 - `/status` 查看当前 agent、session、turn 和 MCP server 状态

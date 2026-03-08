@@ -169,6 +169,7 @@ describe("ChatOrchestrator + ACP integration", () => {
   async function startOrchestrator(
     toolApprovalMode: ToolApprovalMode = "auto",
     outputMode: OutputMode = "full",
+    defaultMode?: string,
   ): Promise<ChatOrchestrator> {
     const instance = new ChatOrchestrator({
       channel: adapter,
@@ -181,6 +182,7 @@ describe("ChatOrchestrator + ACP integration", () => {
         allowChats: ["telegram:1001"],
         allowUsers: [],
       },
+      defaultMode,
       outputMode,
       toolApprovalMode,
       logger,
@@ -240,10 +242,14 @@ describe("ChatOrchestrator + ACP integration", () => {
     await manager.stopAll();
   });
 
-  it("rejects prompt when /session was not created", async () => {
+  it("auto-creates a session for the first prompt", async () => {
     await adapter.emit("hello");
 
-    expect(adapter.messages.at(-1)?.text).toContain("Run /new first");
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+
+    const merged = adapter.messages.map((m) => m.text).join("\n");
+    expect(merged).toContain("Echo: hello");
+    expect(merged).toContain("permission:allow");
   });
 
   it("runs initialize -> session/new -> session/prompt and auto-approves permission", async () => {
@@ -365,6 +371,8 @@ describe("ChatOrchestrator + ACP integration", () => {
         { name: "agent", description: "Switch the active agent" },
         { name: "workspace", description: "Switch the active workspace" },
         { name: "new", description: "Create a new ACP session" },
+        { name: "modes", description: "List selectable modes for the active session" },
+        { name: "mode", description: "Set the mode for the active session" },
         { name: "models", description: "List selectable models for the active session" },
         { name: "model", description: "Set the model for the active session" },
         { name: "status", description: "Show current chat state" },
@@ -394,6 +402,7 @@ describe("ChatOrchestrator + ACP integration", () => {
     const status = adapter.messages.at(-1)?.text;
     expect(status).toContain("Agent: fake");
     expect(status).toContain(`Workspace: repo (${path.join(workspaceRoot, "repo")})`);
+    expect(status).toContain("Mode: (not available)");
     expect(status).toContain("Model: (not available)");
     expect(status).toContain("MCP servers: filesystem (stdio), docs (http)");
   });
@@ -413,13 +422,10 @@ describe("ChatOrchestrator + ACP integration", () => {
     ]);
   });
 
-  it("switches workspace and uses it for the next session", async () => {
+  it("switches workspace and auto-creates the next session in that workspace", async () => {
     await adapter.emit("/workspace alt");
     expect(adapter.messages.at(-1)?.text).toContain("Workspace switched to 'alt'");
-
-    adapter.clearMessages();
-    await adapter.emit("/new");
-    expect(adapter.messages.at(-1)?.text).toContain("Workspace: alt");
+    expect(adapter.messages.at(-1)?.text).toContain("created automatically");
 
     adapter.clearMessages();
     await adapter.emit("please report cwd");
@@ -437,7 +443,38 @@ describe("ChatOrchestrator + ACP integration", () => {
     const status = adapter.messages.at(-1)?.text;
     expect(status).toContain("Session: ");
     expect(status).not.toContain("Session: (none)");
+    expect(status).toContain("Mode: read-only");
     expect(status).toContain("Model: gpt-5");
+  });
+
+  it("lists selectable modes for the active session", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/modes");
+
+    expect(adapter.messages.at(-1)?.text).toContain("Current mode: read-only");
+    expect(adapter.messages.at(-1)?.text).toContain("* read-only (Read Only)");
+    expect(adapter.messages.at(-1)?.text).toContain("auto (Default)");
+    expect(adapter.messages.at(-1)?.text).toContain("full-access (Full Access)");
+  });
+
+  it("switches the active session mode", async () => {
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/mode auto");
+    expect(adapter.messages.at(-1)?.text).toContain("Mode switched to 'auto'");
+
+    adapter.clearMessages();
+    await adapter.emit("/modes");
+    expect(adapter.messages.at(-1)?.text).toContain("Current mode: auto");
+    expect(adapter.messages.at(-1)?.text).toContain("* auto (Default)");
+
+    adapter.clearMessages();
+    await adapter.emit("please report mode");
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain("[mode:auto]");
   });
 
   it("passes configured MCP servers into session/new", async () => {
@@ -474,6 +511,22 @@ describe("ChatOrchestrator + ACP integration", () => {
     expect(merged).toContain("permission:allow");
   });
 
+  it("applies the configured default mode when creating a session", async () => {
+    await orchestrator.stop();
+    orchestrator = await startOrchestrator("auto", "full", "auto");
+
+    await adapter.emit("/new");
+    adapter.clearMessages();
+
+    await adapter.emit("/status");
+    expect(adapter.messages.at(-1)?.text).toContain("Mode: auto");
+
+    adapter.clearMessages();
+    await adapter.emit("please report mode");
+    await waitFor(() => adapter.messages.some((m) => m.text.includes("[tool] Fake search operation (completed)")));
+    expect(adapter.messages.map((entry) => entry.text).join("\n")).toContain("[mode:auto]");
+  });
+
   it("resets chat-scoped commands when the active agent changes", async () => {
     await adapter.emit("/new");
     await waitFor(() => adapter.syncedCommands.length >= 2);
@@ -489,6 +542,8 @@ describe("ChatOrchestrator + ACP integration", () => {
           { name: "agent", description: "Switch the active agent" },
           { name: "workspace", description: "Switch the active workspace" },
           { name: "new", description: "Create a new ACP session" },
+          { name: "modes", description: "List selectable modes for the active session" },
+          { name: "mode", description: "Set the mode for the active session" },
           { name: "models", description: "List selectable models for the active session" },
           { name: "model", description: "Set the model for the active session" },
           { name: "status", description: "Show current chat state" },

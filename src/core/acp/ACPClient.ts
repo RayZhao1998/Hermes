@@ -3,6 +3,7 @@ import type {
   AvailableCommand,
   AvailableCommandsUpdate,
   ConfigOptionUpdate,
+  CurrentModeUpdate,
   InitializeResponse,
   McpServer,
   NewSessionResponse,
@@ -13,6 +14,7 @@ import type {
   SessionConfigOption,
   SessionConfigSelectGroup,
   SessionConfigSelectOption,
+  SessionModeState,
   SessionModelState,
   SessionNotification,
   SessionUpdate,
@@ -45,11 +47,22 @@ export interface SelectableModel {
   description?: string;
 }
 
+export interface SelectableMode {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface SessionModelSelection {
   configId?: string;
   currentModelId: string;
   models: SelectableModel[];
   source: "config_option" | "legacy_models";
+}
+
+export interface SessionModeSelection {
+  currentModeId: string;
+  modes: SelectableMode[];
 }
 
 export class ACPClient {
@@ -59,6 +72,7 @@ export class ACPClient {
   private readonly pendingPermissionsBySession = new Map<string, Set<PendingPermissionRequest>>();
   private readonly availableCommandsBySession = new Map<string, AvailableCommand[]>();
   private readonly configOptionsBySession = new Map<string, SessionConfigOption[]>();
+  private readonly modesBySession = new Map<string, SessionModeState>();
   private readonly legacyModelsBySession = new Map<string, SessionModelState>();
   private readonly logger: Logger;
   private initialized = false;
@@ -154,6 +168,22 @@ export class ACPClient {
     return [...(this.availableCommandsBySession.get(sessionId) ?? [])];
   }
 
+  getModeSelection(sessionId: string): SessionModeSelection | null {
+    const modes = this.modesBySession.get(sessionId);
+    if (!modes) {
+      return null;
+    }
+
+    return {
+      currentModeId: modes.currentModeId,
+      modes: modes.availableModes.map((mode) => ({
+        id: mode.id,
+        name: mode.name,
+        description: mode.description ?? undefined,
+      })),
+    };
+  }
+
   getModelSelection(sessionId: string): SessionModelSelection | null {
     const configSelection = toModelSelectionFromConfigOptions(this.configOptionsBySession.get(sessionId));
     if (configSelection) {
@@ -173,6 +203,35 @@ export class ACPClient {
         description: model.description ?? undefined,
       })),
       source: "legacy_models",
+    };
+  }
+
+  async setMode(sessionId: string, modeId: string): Promise<SessionModeSelection> {
+    this.ensureInitialized();
+
+    const current = this.modesBySession.get(sessionId);
+    if (!current) {
+      throw new Error("Active session does not expose selectable modes.");
+    }
+
+    await this.connection.setSessionMode({
+      sessionId,
+      modeId,
+    });
+
+    const updated: SessionModeState = {
+      ...current,
+      currentModeId: modeId,
+    };
+    this.modesBySession.set(sessionId, updated);
+
+    return this.getModeSelection(sessionId) ?? {
+      currentModeId: modeId,
+      modes: current.availableModes.map((mode) => ({
+        id: mode.id,
+        name: mode.name,
+        description: mode.description ?? undefined,
+      })),
     };
   }
 
@@ -249,6 +308,17 @@ export class ACPClient {
     const configOptions = extractConfigOptions(params.update);
     if (configOptions) {
       this.configOptionsBySession.set(params.sessionId, configOptions);
+    }
+
+    const currentMode = extractCurrentMode(params.update);
+    if (currentMode) {
+      const existing = this.modesBySession.get(params.sessionId);
+      if (existing) {
+        this.modesBySession.set(params.sessionId, {
+          ...existing,
+          currentModeId: currentMode.currentModeId,
+        });
+      }
     }
 
     const scoped = this.listeners.get(params.sessionId);
@@ -378,12 +448,18 @@ export class ACPClient {
 
   private captureSessionState(
     sessionId: string,
-    response: Pick<NewSessionResponse, "configOptions" | "models">,
+    response: Pick<NewSessionResponse, "configOptions" | "modes" | "models">,
   ): void {
     if (Array.isArray(response.configOptions)) {
       this.configOptionsBySession.set(sessionId, response.configOptions);
     } else {
       this.configOptionsBySession.delete(sessionId);
+    }
+
+    if (response.modes) {
+      this.modesBySession.set(sessionId, response.modes);
+    } else {
+      this.modesBySession.delete(sessionId);
     }
 
     if (response.models) {
@@ -418,6 +494,19 @@ function extractConfigOptions(update: SessionUpdate): SessionConfigOption[] | nu
   }
 
   return configOptionUpdate.configOptions;
+}
+
+function extractCurrentMode(update: SessionUpdate): CurrentModeUpdate | null {
+  const currentModeUpdate = update as SessionUpdate & CurrentModeUpdate;
+  if (currentModeUpdate.sessionUpdate !== "current_mode_update") {
+    return null;
+  }
+
+  if (typeof currentModeUpdate.currentModeId !== "string") {
+    return null;
+  }
+
+  return currentModeUpdate;
 }
 
 function toModelSelectionFromConfigOptions(
