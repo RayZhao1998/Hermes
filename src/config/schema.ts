@@ -97,7 +97,8 @@ const discordBotConfigSchema = botBaseSchema.extend({
   channel: z.literal("discord"),
   adapter: z.object({
     token: z.string().min(1, "Discord token must not be empty."),
-    applicationId: z.string().min(1).optional(),
+    applicationId: z.string().min(1, "Discord applicationId must not be empty."),
+    publicKey: z.string().min(1, "Discord publicKey must not be empty."),
   }).strict(),
 }).strict();
 
@@ -289,7 +290,8 @@ export interface LoadedDiscordBotConfig extends LoadedBotConfigBase {
   channel: "discord";
   adapter: {
     token: string;
-    applicationId?: string;
+    applicationId: string;
+    publicKey: string;
   };
 }
 

@@ -44,7 +44,7 @@ Hermes 会把兼容 ACP 的 agent 变成一个类似 OpenClaw 的个人助理，
 
 - Hermes 通过 Discord Gateway 收消息，并在 CLI 进程内持续监管 listener。
 - Discord 侧命令使用 `!` 前缀，例如 `!new`、`!status`、`!agent codex`。
-- 当前 Chat SDK 适配器即使只走 Gateway CLI，也要求环境变量里提供 `DISCORD_PUBLIC_KEY`。
+- Discord bot 的凭据都放在 `bots[].adapter` 下，包括 `token`、`applicationId` 和 `publicKey`。
 - `allowChats` 可写成 `discord:@me:<dmChannelId>`、`discord:<guildId>:<channelId>` 或 `discord:<guildId>:<channelId>:<threadId>`。
 - 白名单命中父频道时，其子线程也会自动放行。
 - 当前版本不支持交互式选择器、按钮式工具审批和原生 Discord slash commands。

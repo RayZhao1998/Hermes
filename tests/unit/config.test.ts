@@ -159,7 +159,7 @@ describe("config loading", () => {
     expect(parsed.bots[0]?.access).toEqual({ allowChats: [], allowUsers: [] });
   });
 
-  it("loads Discord bot config with optional applicationId", async () => {
+  it("loads Discord bot config with applicationId and publicKey", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
     const configPath = path.join(dir, "hermes.config.yaml");
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
@@ -168,7 +168,7 @@ describe("config loading", () => {
 
     await writeFile(
       configPath,
-      `agents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\nbots:\n  - id: discord-main\n    channel: discord\n    profileId: default\n    adapter:\n      token: discord-token\n      applicationId: app-123\n`,
+      `agents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\nbots:\n  - id: discord-main\n    channel: discord\n    profileId: default\n    adapter:\n      token: discord-token\n      applicationId: app-123\n      publicKey: "${"0".repeat(64)}"\n`,
       "utf8",
     );
 
@@ -178,6 +178,7 @@ describe("config loading", () => {
     expect(loaded.bots[0]?.adapter).toEqual({
       token: "discord-token",
       applicationId: "app-123",
+      publicKey: "0".repeat(64),
     });
   });
 

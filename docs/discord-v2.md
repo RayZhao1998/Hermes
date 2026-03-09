@@ -37,9 +37,9 @@ Grant the bot permissions needed for Hermes replies:
 
 Set these runtime values as well:
 
-- `bots[].adapter.token` or `DISCORD_BOT_TOKEN`
-- `bots[].adapter.applicationId` or `DISCORD_APPLICATION_ID`
-- `DISCORD_PUBLIC_KEY`
+- `bots[].adapter.token`
+- `bots[].adapter.applicationId`
+- `bots[].adapter.publicKey`
 
 ## Config example
 
@@ -59,11 +59,12 @@ bots:
         - discord:987654321098765432:234567890123456789:345678901234567890
       allowUsers: []
     adapter:
-      token: ${DISCORD_BOT_TOKEN}
-      applicationId: ${DISCORD_APPLICATION_ID}
+      token: "<discord-bot-token>"
+      applicationId: "<discord-application-id>"
+      publicKey: "<discord-public-key>"
 ```
 
-`applicationId` remains optional in config because Hermes can also read `DISCORD_APPLICATION_ID` from the environment. `DISCORD_PUBLIC_KEY` is required by the current Chat SDK adapter even in Gateway-only CLI mode.
+Hermes now requires Discord adapter credentials to be configured per bot in `config.yaml`. This keeps multi-bot setups fully configurable without relying on process-wide environment variables.
 
 ## `allowChats` semantics
 

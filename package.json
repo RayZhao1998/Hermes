@@ -1,6 +1,6 @@
 {
   "name": "hermes-gateway",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "description": "ACP multi-channel gateway for Telegram and Discord via Chat SDK",
   "keywords": [

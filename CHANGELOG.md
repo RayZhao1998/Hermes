@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.1 - 2026-03-10
+
+Hermes 0.4.1 makes Discord public keys bot-scoped configuration so multi-bot Discord deployments no longer depend on a single process-wide environment variable.
+
+### Highlights
+
+- Added `bots[].adapter.publicKey` and require Discord adapter credentials to live in each bot config entry.
+- Removed the global Discord environment variable fallback so multiple Discord bots can carry independent credentials cleanly.
+
+### Changed
+
+- Discord bot config now requires `adapter.applicationId` and `adapter.publicKey` directly in `config.yaml`.
+- Discord docs and README examples now describe per-bot adapter credentials instead of process-wide environment variables.
+
+### Validation
+
+- `npm run build`
+- `npm test`
+- `npm pack`
+
 ## 0.4.0 - 2026-03-10
 
 Hermes 0.4.0 turns Discord from a placeholder into a usable Gateway-backed channel and fixes scheduled cron tasks so the first matching run fires correctly even when Hermes starts exactly on the schedule boundary.

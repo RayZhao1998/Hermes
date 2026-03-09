@@ -1,10 +1,8 @@
 import pino from "pino";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { LoadedBotConfig } from "../../src/config/schema.js";
 import { DiscordAdapter } from "../../src/adapters/discord/DiscordAdapter.js";
 import { createChannel, resolveToolApprovalMode } from "../../src/main.js";
-
-const originalEnv = { ...process.env };
 
 function bot(overrides: Partial<LoadedBotConfig>): LoadedBotConfig {
   return {
@@ -30,23 +28,13 @@ function bot(overrides: Partial<LoadedBotConfig>): LoadedBotConfig {
     adapter: {
       token: "discord-token",
       applicationId: "app-123",
+      publicKey: "0".repeat(64),
     },
     ...overrides,
   } as LoadedBotConfig;
 }
 
 describe("main helpers", () => {
-  beforeEach(() => {
-    process.env = {
-      ...originalEnv,
-      DISCORD_PUBLIC_KEY: "0".repeat(64),
-    };
-  });
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
   it("creates a Discord channel adapter without throwing", () => {
     const logger = pino({ enabled: false });
 
@@ -90,5 +78,18 @@ describe("main helpers", () => {
 
     expect(mode).toBe("manual");
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("requires publicKey in Discord bot config", () => {
+    const logger = pino({ enabled: false });
+    const invalidBot = {
+      ...bot({}),
+      adapter: {
+        token: "discord-token",
+        applicationId: "app-123",
+      },
+    } as unknown as LoadedBotConfig;
+
+    expect(() => createChannel(invalidBot, logger)).toThrow("requires adapter.publicKey in config");
   });
 });

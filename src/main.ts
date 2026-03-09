@@ -28,25 +28,18 @@ export function createChannel(bot: LoadedBotConfig, logger: pino.Logger) {
     case "telegram":
       return new TelegramAdapter(bot.adapter.token, logger.child({ component: "telegram", botId: bot.id }));
     case "discord": {
-      const applicationId = bot.adapter.applicationId ?? process.env.DISCORD_APPLICATION_ID;
-      const publicKey = process.env.DISCORD_PUBLIC_KEY;
-
-      if (!applicationId) {
-        throw new Error(
-          `Discord bot '${bot.id}' requires adapter.applicationId or DISCORD_APPLICATION_ID.`,
-        );
+      if (!bot.adapter.applicationId) {
+        throw new Error(`Discord bot '${bot.id}' requires adapter.applicationId in config.`);
       }
-      if (!publicKey) {
-        throw new Error(
-          `Discord bot '${bot.id}' requires DISCORD_PUBLIC_KEY for the Chat SDK adapter.`,
-        );
+      if (!bot.adapter.publicKey) {
+        throw new Error(`Discord bot '${bot.id}' requires adapter.publicKey in config.`);
       }
 
       return new DiscordAdapter(
         bot.adapter.token,
         logger.child({ component: "discord", botId: bot.id }),
-        applicationId,
-        publicKey,
+        bot.adapter.applicationId,
+        bot.adapter.publicKey,
       );
     }
   }

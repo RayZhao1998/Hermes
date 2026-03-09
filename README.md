@@ -44,7 +44,7 @@ Current ACP transport support is `stdio` only. Chat state is currently in-memory
 
 - Hermes listens through the Discord Gateway and supervises the listener inside the CLI process.
 - Discord commands use `!` syntax such as `!new`, `!status`, and `!agent codex`.
-- The current Chat SDK adapter also requires `DISCORD_PUBLIC_KEY` in the environment, even for Gateway-only CLI usage.
+- Discord bot credentials live entirely under `bots[].adapter`, including `token`, `applicationId`, and `publicKey`.
 - Whitelisting uses `allowChats` entries such as `discord:@me:<dmChannelId>`, `discord:<guildId>:<channelId>`, or `discord:<guildId>:<channelId>:<threadId>`.
 - Whitelisting a parent channel also authorizes its child threads.
 - Interactive pickers, button-based approvals, and native Discord slash commands are not supported in this release.
