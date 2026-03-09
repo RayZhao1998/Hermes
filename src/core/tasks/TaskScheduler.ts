@@ -32,6 +32,10 @@ function getNextCronRun(expression: string, currentDate: Date, timezone?: string
   }).next().toDate();
 }
 
+function getFirstCronRun(expression: string, currentDate: Date, timezone?: string): Date {
+  return getNextCronRun(expression, new Date(currentDate.getTime() - 1000), timezone);
+}
+
 function computeNextRunAt(task: ScheduledTaskConfig, now: Date): Date | undefined {
   if (!task.enabled) {
     return undefined;
@@ -42,10 +46,16 @@ function computeNextRunAt(task: ScheduledTaskConfig, now: Date): Date | undefine
       if (task.lastRunAt) {
         return undefined;
       }
+      if (task.nextRunAt) {
+        return toDate(task.nextRunAt);
+      }
       return toDate(task.schedule.at);
     case "interval":
       if (task.lastRunAt) {
         return new Date(toDate(task.lastRunAt).getTime() + (task.schedule.everySeconds * 1000));
+      }
+      if (task.nextRunAt) {
+        return toDate(task.nextRunAt);
       }
       if (task.schedule.startAt) {
         return toDate(task.schedule.startAt);
@@ -55,12 +65,15 @@ function computeNextRunAt(task: ScheduledTaskConfig, now: Date): Date | undefine
       if (task.lastRunAt) {
         return getNextCronRun(task.schedule.expression, toDate(task.lastRunAt), task.schedule.timezone);
       }
-      return getNextCronRun(task.schedule.expression, now, task.schedule.timezone);
+      if (task.nextRunAt) {
+        return toDate(task.nextRunAt);
+      }
+      return getFirstCronRun(task.schedule.expression, now, task.schedule.timezone);
   }
 }
 
 function isTaskDue(task: ScheduledTaskConfig, now: Date): boolean {
-  const nextRunAt = computeNextRunAt(task, now);
+  const nextRunAt = task.nextRunAt ? toDate(task.nextRunAt) : computeNextRunAt(task, now);
   return Boolean(nextRunAt && nextRunAt.getTime() <= now.getTime());
 }
 
