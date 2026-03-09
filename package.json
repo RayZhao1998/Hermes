@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
+    "@chat-adapter/discord": "^4.17.0",
     "@chat-adapter/state-memory": "^4.17.0",
     "@chat-adapter/telegram": "^4.17.0",
     "@clack/prompts": "^1.1.0",

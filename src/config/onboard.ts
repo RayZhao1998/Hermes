@@ -455,6 +455,7 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<strin
       `Config path: ${configPath}`,
       `Agent workspace: ${workspaceDir}`,
       "This flow sets up one Telegram bot, one profile, and ACP agents.",
+      "Discord bots are supported, but must be added by editing config.yaml manually.",
       "Chats default to the built-in Hermes workspace and can switch to configured workspaces in Telegram.",
     ].join("\n"),
     "Setup",

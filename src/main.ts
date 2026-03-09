@@ -1,8 +1,9 @@
 import "dotenv/config";
 import pino from "pino";
+import { DiscordAdapter } from "./adapters/discord/DiscordAdapter.js";
 import { TelegramAdapter } from "./adapters/telegram/TelegramAdapter.js";
 import { loadConfig } from "./config/load.js";
-import type { LoadedBotConfig, LoadedProfileConfig } from "./config/schema.js";
+import type { LoadedBotConfig, LoadedProfileConfig, ToolApprovalMode } from "./config/schema.js";
 import { AgentProcessManager } from "./core/acp/AgentProcessManager.js";
 import { ChatOrchestrator } from "./core/orchestrator/ChatOrchestrator.js";
 import { CommandRouter } from "./core/router/CommandRouter.js";
@@ -22,13 +23,45 @@ function createAgentManager(profile: LoadedProfileConfig, logger: pino.Logger): 
   );
 }
 
-function createChannel(bot: LoadedBotConfig, logger: pino.Logger) {
+export function createChannel(bot: LoadedBotConfig, logger: pino.Logger) {
   switch (bot.channel) {
     case "telegram":
       return new TelegramAdapter(bot.adapter.token, logger.child({ component: "telegram", botId: bot.id }));
-    case "discord":
-      throw new Error(`Discord bot '${bot.id}' is not implemented yet.`);
+    case "discord": {
+      const applicationId = bot.adapter.applicationId ?? process.env.DISCORD_APPLICATION_ID;
+      const publicKey = process.env.DISCORD_PUBLIC_KEY;
+
+      if (!applicationId) {
+        throw new Error(
+          `Discord bot '${bot.id}' requires adapter.applicationId or DISCORD_APPLICATION_ID.`,
+        );
+      }
+      if (!publicKey) {
+        throw new Error(
+          `Discord bot '${bot.id}' requires DISCORD_PUBLIC_KEY for the Chat SDK adapter.`,
+        );
+      }
+
+      return new DiscordAdapter(
+        bot.adapter.token,
+        logger.child({ component: "discord", botId: bot.id }),
+        applicationId,
+        publicKey,
+      );
+    }
   }
+}
+
+export function resolveToolApprovalMode(bot: LoadedBotConfig, logger: pino.Logger): ToolApprovalMode {
+  if (bot.channel === "discord" && bot.profile.tools.approvalMode === "manual") {
+    logger.warn(
+      { botId: bot.id, profileId: bot.profileId },
+      "Discord does not support interactive manual tool approval yet; using auto approval for this bot",
+    );
+    return "auto";
+  }
+
+  return bot.profile.tools.approvalMode;
 }
 
 export async function startHermes(options: StartHermesOptions = {}): Promise<void> {
@@ -75,6 +108,7 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
       }
 
       const channel = createChannel(bot, logger);
+      const toolApprovalMode = resolveToolApprovalMode(bot, logger);
       const orchestrator = new ChatOrchestrator({
         channel,
         stateStore: new InMemoryChatStateStore(),
@@ -85,7 +119,7 @@ export async function startHermes(options: StartHermesOptions = {}): Promise<voi
         accessControl: bot.access,
         defaultMode: bot.defaultMode,
         outputMode: bot.profile.outputMode,
-        toolApprovalMode: bot.profile.tools.approvalMode,
+        toolApprovalMode,
         logger: logger.child({ component: "orchestrator", botId: bot.id, profileId: bot.profileId }),
       });
 

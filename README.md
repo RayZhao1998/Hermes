@@ -4,7 +4,7 @@ English | [简体中文](./README.zh-CN.md)
 
 Hermes turns ACP-compatible agents into an OpenClaw-style personal assistant, then exposes that assistant to chat applications through the [Chat SDK](https://chat-sdk.dev/).
 
-It keeps the agent side protocol-native, so the same Hermes instance can front any agent that speaks ACP over `stdio` while presenting it through Telegram today and more chat platforms over time.
+It keeps the agent side protocol-native, so the same Hermes instance can front any agent that speaks ACP over `stdio` while presenting it through Telegram, Discord, and more chat platforms over time.
 
 Examples of compatible agents include:
 
@@ -30,7 +30,7 @@ Current ACP transport support is `stdio` only. Chat state is currently in-memory
 | Platform | Status | Current support |
 | --- | --- | --- |
 | Telegram | Available now | Implemented with Chat SDK polling via `@chat-adapter/telegram`. Supports inbound messages, outbound send/edit, built-in command registration, namespaced ACP commands, and manual tool approval via action buttons. |
-| Discord | TODO | The channel abstraction and `DiscordAdapter` placeholder already exist, but gateway events, sending/editing messages, config, and runtime wiring are not implemented yet. The current release starts Telegram only. |
+| Discord | Available now | Implemented with `@chat-adapter/discord` in Gateway-only CLI mode. Supports inbound messages in whitelisted DMs/channels/threads, outbound send/edit, and typing indicators. Does not support HTTP interactions, button UIs, or native slash commands. |
 
 ### Telegram details
 
@@ -40,11 +40,16 @@ Current ACP transport support is `stdio` only. Chat state is currently in-memory
 - When Telegram command naming rules require it, Hermes publishes a `__` alias such as `/codex__logout` for `/codex:logout`.
 - Manual tool approval uses Telegram action buttons.
 
-### Discord status
+### Discord details
 
-- `src/adapters/discord/DiscordAdapter.ts` is a placeholder only.
-- `ChannelAdapter` and the orchestrator are already structured to support Discord cleanly.
-- See [docs/discord-v2.md](./docs/discord-v2.md) for the current implementation notes.
+- Hermes listens through the Discord Gateway and supervises the listener inside the CLI process.
+- Discord commands use `!` syntax such as `!new`, `!status`, and `!agent codex`.
+- The current Chat SDK adapter also requires `DISCORD_PUBLIC_KEY` in the environment, even for Gateway-only CLI usage.
+- Whitelisting uses `allowChats` entries such as `discord:@me:<dmChannelId>`, `discord:<guildId>:<channelId>`, or `discord:<guildId>:<channelId>:<threadId>`.
+- Whitelisting a parent channel also authorizes its child threads.
+- Interactive pickers, button-based approvals, and native Discord slash commands are not supported in this release.
+- If a Discord bot uses `tools.approvalMode: manual`, Hermes logs a warning and runs that bot with effective `auto` approval.
+- See [docs/discord-v2.md](./docs/discord-v2.md) for setup details and limitations.
 
 ## Installation
 
@@ -65,7 +70,7 @@ npx hermes-gateway@latest
 
 On first run, Hermes creates `~/.hermes/config.yaml` interactively if it does not exist yet.
 
-The generated config creates one default profile and one Telegram bot. Telegram bot tokens live under `bots[].adapter.token`.
+The generated config creates one default profile and one Telegram bot. Telegram bot tokens live under `bots[].adapter.token`. Discord bots are supported, but you add them by editing `config.yaml` manually.
 
 ## Setup
 
@@ -74,7 +79,7 @@ Hermes keeps a built-in default workspace at `~/.hermes/workspace`.
 Config shape:
 
 - `agents` declares ACP agent processes such as `id`, `command`, `args`, and `env`
-- `workspaces` declares named workspace ids and absolute project paths that chats can switch to via Telegram
+- `workspaces` declares named workspace ids and absolute project paths that chats can switch to via chat commands
 - `mcpServers` declares reusable MCP server definitions by `name`
 - `profiles` declares reusable runtime behavior such as `defaultAgentId`, enabled agents, MCP servers, output mode, and tool approval
 - `bots` declares concrete chat bot instances with `channel`, `profileId`, `defaultWorkspaceId`, bot-specific `access`, and adapter credentials
@@ -90,11 +95,13 @@ cp -R ~/.openclaw/workspace/. ~/.hermes/workspace/
 
 ## Usage
 
-Start Hermes, then talk to your bot in Telegram and create a session with:
+Start Hermes, then talk to your bot and create a session with:
 
 ```text
 /new
 ```
+
+On Discord, use the `!` prefix instead, for example `!new`.
 
 Useful commands:
 
@@ -114,7 +121,7 @@ Useful commands:
 - `src/config/`: config loading, schema validation, onboarding
 - `src/core/`: ACP client, process manager, orchestration, routing, security, state
 - `src/adapters/telegram/`: Telegram transport implementation
-- `src/adapters/discord/`: Discord placeholder for V2
+- `src/adapters/discord/`: Discord transport implementation
 - `tests/unit/` and `tests/integration/`: automated test coverage
 - `tools/fake-acp-agent.ts`: fake ACP agent for integration tests
 

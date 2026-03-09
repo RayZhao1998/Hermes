@@ -159,6 +159,28 @@ describe("config loading", () => {
     expect(parsed.bots[0]?.access).toEqual({ allowChats: [], allowUsers: [] });
   });
 
+  it("loads Discord bot config with optional applicationId", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hermes-config-"));
+    const configPath = path.join(dir, "hermes.config.yaml");
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "hermes-home-"));
+
+    process.env.HOME = homeDir;
+
+    await writeFile(
+      configPath,
+      `agents:\n  - id: a\n    command: echo\n    args: []\n    env: {}\nprofiles:\n  - id: default\n    defaultAgentId: a\nbots:\n  - id: discord-main\n    channel: discord\n    profileId: default\n    adapter:\n      token: discord-token\n      applicationId: app-123\n`,
+      "utf8",
+    );
+
+    const loaded = await loadConfig(configPath);
+
+    expect(loaded.bots[0]?.channel).toBe("discord");
+    expect(loaded.bots[0]?.adapter).toEqual({
+      token: "discord-token",
+      applicationId: "app-123",
+    });
+  });
+
   it("rejects bots that reference unknown workspaces", () => {
     expect(() =>
       hermesConfigSchema.parse({

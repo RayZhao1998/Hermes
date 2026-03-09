@@ -55,4 +55,40 @@ describe("isAuthorizedMessage", () => {
     });
     expect(allowed).toBe(false);
   });
+
+  it("allows Discord threads when the exact thread is whitelisted", () => {
+    const allowed = isAuthorizedMessage(message({
+      platform: "discord",
+      chatId: "guild-1:channel-2:thread-3",
+    }), {
+      allowChats: ["discord:guild-1:channel-2:thread-3"],
+      allowUsers: [],
+    });
+
+    expect(allowed).toBe(true);
+  });
+
+  it("allows Discord threads when the parent channel is whitelisted", () => {
+    const allowed = isAuthorizedMessage(message({
+      platform: "discord",
+      chatId: "guild-1:channel-2:thread-3",
+    }), {
+      allowChats: ["discord:guild-1:channel-2"],
+      allowUsers: [],
+    });
+
+    expect(allowed).toBe(true);
+  });
+
+  it("rejects Discord threads when neither thread nor parent channel is whitelisted", () => {
+    const allowed = isAuthorizedMessage(message({
+      platform: "discord",
+      chatId: "guild-1:channel-2:thread-3",
+    }), {
+      allowChats: ["discord:guild-1:channel-9"],
+      allowUsers: [],
+    });
+
+    expect(allowed).toBe(false);
+  });
 });
