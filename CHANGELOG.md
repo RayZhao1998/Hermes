@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.0 - 2026-03-10
+
+Hermes 0.4.0 turns Discord from a placeholder into a usable Gateway-backed channel and fixes scheduled cron tasks so the first matching run fires correctly even when Hermes starts exactly on the schedule boundary.
+
+### Highlights
+
+- Added Discord bot runtime support through `@chat-adapter/discord`, including inbound messages, outbound send/edit, typing indicators, and Gateway listener supervision inside the CLI process.
+- Added Discord-specific docs and config guidance, including `allowChats` formats for DMs, channels, and child threads.
+- Fixed scheduled cron tasks so the initial matching occurrence is not skipped when Hermes boots exactly at the scheduled time.
+
+### New
+
+- Added a real `DiscordAdapter` implementation wired into Hermes runtime startup instead of the previous placeholder.
+- Added Discord command normalization from `!command` to Hermes slash-style routing and mapped Discord thread ids into Hermes chat ids.
+- Added Discord runtime handling for proxy-aware network setup, Gateway listener restarts, and warning logs when manual tool approval is configured for Discord.
+- Added unit coverage for Discord adapter wiring, config validation, runtime boot, and Discord-aware authorization behavior.
+
+### Changed
+
+- README and Discord integration docs now describe Discord as an available channel rather than a future placeholder.
+- Chat authorization now allows a whitelisted Discord parent channel to authorize its child threads.
+- Task scheduling now preserves persisted `nextRunAt` values when computing due work for one-time, interval, and cron tasks.
+
+### Validation
+
+- `npm run build`
+- `npm test`
+- `npm pack`
+
 ## 0.3.0 - 2026-03-08
 
 Hermes 0.3.0 adds file-backed scheduled tasks, expands ACP session controls for selectable modes and models, and improves Telegram pickers so common chat actions can be completed without typing command arguments.
